@@ -13,6 +13,7 @@ mod logging;
 mod menu;
 mod probe;
 mod sidecar;
+mod update;
 
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -611,6 +612,8 @@ fn main() {
             let _ = window.show();
 
             start_health_monitor(handle.clone());
+            // 更新检测（L1）：24h 一次，只提示不下载（内部自己起线程，立即返回）
+            update::silent_check(&handle);
             std::thread::spawn(move || run_launch(handle));
             Ok(())
         })

@@ -13,6 +13,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let restart = MenuItemBuilder::with_id("restart", "重启服务")
         .accelerator("CmdOrCtrl+Shift+R")
         .build(app)?;
+    let check_update = MenuItemBuilder::with_id("check_update", "检查更新…").build(app)?;
     let open_browser = MenuItemBuilder::with_id("open_browser", "在浏览器中打开").build(app)?;
     let copy_url = MenuItemBuilder::with_id("copy_url", "复制服务地址").build(app)?;
     let open_logs = MenuItemBuilder::with_id("open_logs", "打开日志目录").build(app)?;
@@ -21,7 +22,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .build(app)?;
 
     let submenu = SubmenuBuilder::new(app, "Pi Web")
-        .items(&[&reload, &restart, &open_browser, &copy_url, &open_logs, &devtools])
+        .items(&[&reload, &restart, &check_update, &open_browser, &copy_url, &open_logs, &devtools])
         .build()?;
     menu.append(&submenu)?;
     Ok(menu)
@@ -39,6 +40,7 @@ pub fn on_event(app: &AppHandle, event: MenuEvent) {
                 crate::logging::line("menu", &format!("重启失败：{error}"));
             }
         }
+        "check_update" => crate::update::manual_check(app),
         "open_browser" => {
             if let Some(url) = crate::current_url(app) {
                 use tauri_plugin_opener::OpenerExt;

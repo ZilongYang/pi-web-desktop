@@ -209,8 +209,21 @@ if (!has("--no-prune")) {
 // ---- 4. manifest ----------------------------------------------------------
 const nodeBin = path.join(RUNTIME_DIR, nodeBinName);
 const after = dirSize(SIDECAR);
+let piSdkVersion = "";
+try {
+  piSdkVersion = JSON.parse(
+    fs.readFileSync(
+      path.join(APP_DIR, "node_modules", "@earendil-works", "pi-coding-agent", "package.json"),
+      "utf8",
+    ),
+  ).version;
+} catch {
+  /* 读不到就留空，启动时再从包内读 */
+}
+
 const manifest = {
   piWebVersion: pins.piWebVersion,
+  piSdkVersion,
   nodeVersion: pins.nodeVersion,
   nodeVersionActual: execFileSync(nodeBin, ["--version"], { encoding: "utf8" }).trim(),
   target,
@@ -222,7 +235,7 @@ const manifest = {
 fs.writeFileSync(MANIFEST, `${JSON.stringify(manifest, null, 2)}\n`);
 
 log("完成");
-log(`  pi-web ${manifest.piWebVersion}  node ${manifest.nodeVersionActual}`);
+log(`  pi-web ${manifest.piWebVersion} · pi SDK ${manifest.piSdkVersion || "?"} · node ${manifest.nodeVersionActual}`);
 log(`  侧车总体积 ${human(after.total)} / ${after.files} 文件`);
 log(`  manifest: sidecar/manifest.json`);
 assertNodeVersionOk(manifest.nodeVersionActual);

@@ -85,6 +85,26 @@ cargo build                 # 调试构建
 - **首次启动会重写 `Resources/pi-web/app/node_modules/@agegr/pi-web/.next/prerender-manifest.json`**（pi-web launcher 轮换 preview 密钥的安全设计）。之后 `codesign --deep --strict` 会因这一个数据文件报签名不符；签名校验请在本机首次运行**之前**做，或改用 Developer ID + 重新签名的发布流程。
 - **附着模式**：连的是别人启动的 server，退出时不会杀它；桌面窗口与浏览器窗口的 localStorage 互不共享（WKWebView 的数据目录按 app 隔离）。
 
+## 更新（L1：只检测，不自动升级）
+
+壳会替你盯着上游，但**不会自动下载或替换**——pi-web / Node 都打包在已签名的 `.app` 里，替换必须走「换整个 app」（Tauri updater，需要发布源 + 签名）或「运行时侧车热更新」（需要侧车包 + 校验 + 原子切换），这两层还没做。
+
+现在做的：
+
+- 启动后约 10s 静默检查一次 npm registry 的 `@agegr/pi-web/latest`，**24h 最多一次**（时间戳在 `update-state.json`）；有新版才弹提示，没新版/离线都不打扰。
+- 菜单 **Pi Web → 检查更新…** 随时手动查，总是弹结果（含内置版本明细）。
+- 提示里给一键**复制升级命令**：
+
+```bash
+cd ~/zWork/ai/pi-web-desktop && npm run sidecar && npm run build
+```
+
+- pi SDK 由 pi-web 精确锁定（`@earendil-works/*`），它跟着 pi-web 一起升，不要单独升。
+- pi 的扩展/插件/skills 是运行时装的，**不需要壳参与**：pi-web 的插件面板就能装/查更新（侧车里 `npm`/`npx` 可用）。
+- pi-web 自带的更新提示已被 `PI_WEB_SKIP_VERSION_CHECK=1` 关闭（它给的指引是 `npm install -g`，对内置副本无效），提示统一由壳负责。
+
+开发/验证用的环境变量（仅测试用）：`PIWEB_UPDATE_HEADLESS=1`（不弹窗，只写日志）、`PIWEB_UPDATE_FAKE_LATEST=0.14.0`（假装 registry 上有新版）。
+
 ## 构建环境的坑（已内置规避）
 
 - **macOS 26/27 + Rust < 1.99**：cargo 的 release 默认 strip 会作用到 proc-macro，strip 后的 dylib 被新 dyld 拒绝（`mis-aligned LINKEDIT string pool`，表现为 `can't find crate for xxx_derive`）。`src-tauri/Cargo.toml` 已加 `[profile.release.build-override] strip = false` 规避；升到 Rust ≥ 1.99 后可删。

@@ -1,6 +1,6 @@
 {
   "piWebVersion": "0.13.0",
-  "nodeVersion": "22.22.3",
+  "nodeVersion": "22.23.4",
   "nodeDownloadBase": "https://nodejs.org/dist",
-  "_comment": "piWebVersion / nodeVersion 是唯一版本源；改这里 -> 重跑 npm run sidecar -> 重建 app"
+  "_comment": "piWebVersion / nodeVersion 是唯一版本源；改这里 -> 重跑 npm run sidecar -> 重建 app。（Node 22.23.4+ 含 2026-10 的 TLS 修复，Plannotator 会检查）"
 }

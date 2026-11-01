@@ -43,9 +43,11 @@ cargo build                 # 调试构建
 
 | 壳版本 | 内置 pi-web | 内置 Node |
 |---|---|---|
-| 0.1.0 | 0.13.0 | 22.22.3 |
+| 0.1.0 | 0.13.0 | 22.23.4 |
 
 版本只在 `sidecar.json` 里改一处：改完 `npm run sidecar` 再重建即可。升级 pi-web 后**必须**跑一次 `npm run smoke`。
+
+**Node 要跟安全版本走**：内置 Node 是 pi-web 服务端的运行时，它负责所有出站 HTTPS（模型 API、OAuth 登录、更新检查）。`pi.json` 里 pin 的版本低于上游安全修复时，pi 的 Plannotator 扩展会在界面顶部提示（例如 2026-10 的 eMudhra CA 事件要求 Node ≥ 22.23.4 / 24.22.1 / 26.12.1）。升级方式同样是改 `sidecar.json` 的 `nodeVersion` → `npm run sidecar` → `tauri build`。
 
 ## 配置
 

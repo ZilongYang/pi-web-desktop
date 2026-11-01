@@ -181,6 +181,9 @@ fn decide_on_mismatch(app: &tauri::AppHandle, existing: &discovery::ExistingInst
 
 fn run_launch(app: tauri::AppHandle) {
     let state = app.state::<AppState>();
+    if let Ok(mut mode) = state.mode.lock() {
+        *mode = Mode::Starting;
+    }
     status(&app, "starting", "正在准备运行时…");
 
     sidecar::cleanup_previous(&app);
@@ -188,6 +191,9 @@ fn run_launch(app: tauri::AppHandle) {
     let sidecar = match sidecar::resolve(&app) {
         Ok(s) => s,
         Err(error) => {
+            if let Ok(mut mode) = state.mode.lock() {
+                *mode = Mode::Failed;
+            }
             status_failed(&app, "找不到内置的 pi-web 运行时", error.clone());
             // true = 第一个按钮「退出」
             if app
@@ -228,7 +234,6 @@ fn run_launch(app: tauri::AppHandle) {
             if let Err(error) = navigate_main(&app, &existing.url) {
                 status_failed(&app, "连接已有实例失败", error);
             }
-            spawn_health_monitor(app.clone(), existing.port);
             return;
         }
         if let Some(foreign) = discovery::find_foreign(&sidecar.version) {
@@ -242,7 +247,6 @@ fn run_launch(app: tauri::AppHandle) {
                 }
                 status_ready(&app, &foreign.url, foreign.port, &foreign.version, "attached");
                 let _ = navigate_main(&app, &foreign.url);
-                spawn_health_monitor(app.clone(), foreign.port);
                 return;
             }
             logging::line("app", "用户选择启动独立实例");
@@ -265,6 +269,9 @@ fn run_launch(app: tauri::AppHandle) {
     let running = match sidecar::spawn(&sidecar, &config, port) {
         Ok(r) => r,
         Err(error) => {
+            if let Ok(mut mode) = state.mode.lock() {
+                *mode = Mode::Failed;
+            }
             status_failed(&app, "启动侧车失败", error);
             return;
         }
@@ -299,16 +306,21 @@ fn run_launch(app: tauri::AppHandle) {
             if let Err(error) = navigate_main(&app, &url) {
                 status_failed(&app, "导航失败", error);
             }
-            spawn_health_monitor(app.clone(), port);
         }
         probe::ReadyResult::Timeout(elapsed) => {
             let detail = format!(
                 "等了 {}s 仍没有 HTTP 应答。日志尾部见下；常见原因：端口被占、被杀软拦截、侧车文件不完整。",
                 elapsed.as_secs()
             );
+            if let Ok(mut mode) = state.mode.lock() {
+                *mode = Mode::Failed;
+            }
             status_failed(&app, "pi-web 启动超时", detail);
         }
         probe::ReadyResult::Stopped => {
+            if let Ok(mut mode) = state.mode.lock() {
+                *mode = Mode::Failed;
+            }
             status_failed(&app, "pi-web 进程提前退出", "launcher 已退出，请看日志尾部。");
         }
     }
@@ -316,44 +328,114 @@ fn run_launch(app: tauri::AppHandle) {
 
 static HEALTH_MONITOR_STARTED: AtomicBool = AtomicBool::new(false);
 
-/// 运行期健康监控：连续 3 次探测失败才认为真的挂了（避免瞬时抖动误报）。
-fn spawn_health_monitor(app: tauri::AppHandle, port: u16) {
+/// 运行期健康监控，全局只有一个。
+///
+/// 关键点：**每轮都重新读「当前端口 + 当前模式」**，不在启动时把端口捕获进闭包。
+/// 早先的写法在附着外部实例后把端口写死成对方的端口；用户停掉 npx 实例、点了
+/// "重启服务"、应用切到自己起的 30241 之后，旧监控线程仍在盯已经死掉的 30141，
+/// 于是每隔几十秒弹一次"服务已停止响应"——就是这个 bug。
+///
+/// 另外：一次故障只告警一次（`alerted`），恢复后才重新武装，避免刷屏。
+fn start_health_monitor(app: tauri::AppHandle) {
     if HEALTH_MONITOR_STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
-    std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_secs(10));
-        let is_attached = matches!(*app.state::<AppState>().mode.lock().unwrap(), Mode::Attached);
-        if !probe::http_answers(port, Duration::from_millis(800)) {
-            logging::line("health", &format!("端口 {port} 无应答，连续计数 +1"));
-            std::thread::sleep(Duration::from_secs(5));
-            if probe::http_answers(port, Duration::from_millis(800)) {
+    let interval = std::env::var("PIWEB_HEALTH_INTERVAL_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(Duration::from_secs(10));
+    // 便于自动化验证：不弹原生对话框，直接按"重启服务"处理
+    let headless = std::env::var("PIWEB_HEALTH_HEADLESS").ok().as_deref() == Some("1");
+
+    std::thread::spawn(move || {
+        let mut failures: u32 = 0;
+        let mut alerted = false;
+        let mut alerted_port: Option<u16> = None;
+        loop {
+            std::thread::sleep(interval);
+
+            let (port, mode) = {
+                let state = app.state::<AppState>();
+                let port = state.allowed_port.lock().ok().and_then(|p| *p);
+                let mode = *state.mode.lock().unwrap();
+                (port, mode)
+            };
+
+            let Some(port) = port else {
+                failures = 0;
+                alerted = false;
+                continue;
+            };
+            // 正在启动 / 已经失败：不归监控管，等状态机自己走完
+            if matches!(mode, Mode::Starting | Mode::Failed) {
+                failures = 0;
                 continue;
             }
-            std::thread::sleep(Duration::from_secs(5));
             if probe::http_answers(port, Duration::from_millis(800)) {
+                if alerted && alerted_port == Some(port) {
+                    logging::line("health", &format!("端口 {port} 已恢复"));
+                }
+                failures = 0;
+                alerted = false;
+                alerted_port = None;
                 continue;
             }
-            status_failed(
-                &app,
-                "pi-web 服务已停止响应",
-                if is_attached {
-                    "外部实例可能被别处停掉了。可以改用独立实例，或退出后重开。"
+
+            failures += 1;
+            logging::line("health", &format!("端口 {port} 无应答（连续 {failures} 次）"));
+            if failures < 3 || alerted {
+                continue;
+            }
+            alerted = true;
+            alerted_port = Some(port);
+
+            let attached = matches!(mode, Mode::Attached);
+            let detail = if attached {
+                format!(
+                    "外部实例 127.0.0.1:{port} 已停止响应——通常是你把 npx pi-web 那个命令结束了。\
+点「启动服务」会改用内置 pi-web 起一个自己的实例（端口见日志）。"
+                )
+            } else {
+                format!(
+                    "本地服务 127.0.0.1:{port} 已停止响应——可能崩溃，或被 `pi-web stop` 停掉了。\
+点「重启服务」重新拉起。"
+                )
+            };
+            status_failed(&app, "pi-web 服务已停止响应", detail);
+
+            let restart = if headless {
+                logging::line("health", "headless：自动重启");
+                true
+            } else {
+                let (ok_label, cancel_label) = if attached {
+                    ("启动服务", "忽略")
                 } else {
-                    "侧车进程可能崩溃或被 `pi-web stop` 停掉。点重试可重启服务。"
-                },
-            );
-            let restart = app
-                .dialog()
-                .message("pi-web 服务已停止响应。")
-                .title("Pi Web Desktop")
-                .buttons(MessageDialogButtons::OkCancelCustom(
-                    "重启服务".to_string(),
-                    "忽略".to_string(),
-                ))
-                .blocking_show();
+                    ("重启服务", "忽略")
+                };
+                app.dialog()
+                    .message(format!(
+                        "pi-web 服务已停止响应（127.0.0.1:{port}）。{}",
+                        if attached {
+                            "外部实例可能已被你在终端里结束。"
+                        } else {
+                            "本地侧车可能崩溃或被 pi-web stop 停掉。"
+                        }
+                    ))
+                    .title("Pi Web Desktop")
+                    .buttons(MessageDialogButtons::OkCancelCustom(
+                        ok_label.to_string(),
+                        cancel_label.to_string(),
+                    ))
+                    .blocking_show()
+            };
+
             if restart {
-                let _ = restart_sidecar_now(&app);
+                failures = 0;
+                if let Err(error) = restart_sidecar_now(&app) {
+                    logging::line("health", &format!("自动重启失败：{error}"));
+                }
+                std::thread::sleep(Duration::from_secs(5));
             }
         }
     });
@@ -372,7 +454,6 @@ fn stop_current(app: &tauri::AppHandle) {
 pub fn restart_sidecar_now(app: &tauri::AppHandle) -> Result<(), String> {
     logging::line("app", "重启侧车");
     stop_current(app);
-    HEALTH_MONITOR_STARTED.store(false, Ordering::SeqCst);
     let handle = app.clone();
     std::thread::spawn(move || run_launch(handle));
     Ok(())
@@ -529,6 +610,7 @@ fn main() {
                 .build()?;
             let _ = window.show();
 
+            start_health_monitor(handle.clone());
             std::thread::spawn(move || run_launch(handle));
             Ok(())
         })

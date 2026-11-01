@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "主窗口（本地 splash 页）需要的权限；pi-web 页面是远程 origin，M1 不开放任何 IPC。",
+  "windows": ["main"],
+  "permissions": ["core:default", "opener:default", "dialog:default"]
+}

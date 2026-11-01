@@ -1,0 +1,20 @@
+# 生成物：侧车（内置 Node + npm 装的 pi-web），约 600MB，不进 git
+/sidecar/
+/src-tauri/resources/
+
+# Rust
+/src-tauri/target/
+/src-tauri/gen/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# macOS
+.DS_Store
+*.dmg
+*.app
+
+# 本地临时
+*.log
+/tmp/

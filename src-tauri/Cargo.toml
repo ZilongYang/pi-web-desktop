@@ -1,0 +1,34 @@
+[package]
+name = "pi-web-desktop"
+version = "0.1.0"
+description = "Desktop shell for pi-web: bundles Node + the pi-web server, opens it in a native window"
+authors = ["zilong"]
+edition = "2021"
+rust-version = "1.77"
+
+[[bin]]
+name = "pi-web-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# devtools：release 也保留"开发者工具"，WKWebView 出问题时要靠它定位（代价很小）
+tauri = { version = "2", features = ["devtools"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+# 由 tauri-cli 在 release 构建时设置
+custom-protocol = ["tauri/custom-protocol"]
+
+# macOS 26/27 + Rust < 1.99 的已知问题：cargo 的 release 默认 strip="debuginfo" 也会作用到
+# 构建依赖（含 proc-macro），rustc 内置 objcopy 原地 strip 后 LC_SYMTAB 字符串池只有 4 字节对齐，
+# 新 dyld 直接拒绝加载 → 报 "mis-aligned LINKEDIT string pool" / 莫名其妙的 "can't find crate"。
+# build-override 只影响 proc-macro 与 build script（都不进产物），app 二进制仍由 release 正常 strip。
+[profile.release.build-override]
+strip = false

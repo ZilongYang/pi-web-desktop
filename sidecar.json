@@ -1,0 +1,6 @@
+{
+  "piWebVersion": "0.13.0",
+  "nodeVersion": "22.22.3",
+  "nodeDownloadBase": "https://nodejs.org/dist",
+  "_comment": "piWebVersion / nodeVersion 是唯一版本源；改这里 -> 重跑 npm run sidecar -> 重建 app"
+}

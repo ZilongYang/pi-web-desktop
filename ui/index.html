@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pi Web</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0d12;
+        --panel: #121624;
+        --line: #222a3f;
+        --text: #e8ecff;
+        --muted: #8f9bd6;
+        --accent: #7aa2ff;
+        --danger: #ff7a90;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        height: 100%;
+        margin: 0;
+        background: radial-gradient(1200px 700px at 50% -10%, #16203a 0%, var(--bg) 60%);
+        color: var(--text);
+        font: 14px/1.6 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", sans-serif;
+        -webkit-font-smoothing: antialiased;
+        user-select: none;
+      }
+      .wrap {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        padding: 40px;
+      }
+      .logo {
+        width: 88px;
+        height: 88px;
+        border-radius: 24px;
+        background: linear-gradient(145deg, #101526, #070810);
+        border: 1px solid var(--line);
+        display: grid;
+        place-items: center;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+      }
+      .logo svg { width: 48px; height: 48px; }
+      h1 { font-size: 20px; font-weight: 600; margin: 0; letter-spacing: 0.2px; }
+      .status { color: var(--muted); font-size: 13px; min-height: 20px; text-align: center; max-width: 560px; }
+      .status strong { color: var(--text); font-weight: 500; }
+      .bar {
+        width: 220px; height: 3px; border-radius: 999px; overflow: hidden;
+        background: #1a2033;
+      }
+      .bar i {
+        display: block; height: 100%; width: 40%;
+        background: linear-gradient(90deg, transparent, var(--accent), transparent);
+        animation: slide 1.25s ease-in-out infinite;
+      }
+      @keyframes slide { 0% { transform: translateX(-120%); } 100% { transform: translateX(320%); } }
+      .error { display: none; width: min(760px, 100%); }
+      .error .msg { color: var(--danger); font-weight: 500; margin-bottom: 8px; }
+      pre {
+        margin: 0;
+        background: #0d1018;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px 14px;
+        max-height: 240px;
+        overflow: auto;
+        font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #9aa6c8;
+        user-select: text;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      .actions { display: flex; gap: 10px; margin-top: 14px; }
+      button {
+        appearance: none;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--text);
+        padding: 8px 16px;
+        border-radius: 10px;
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      button:hover { border-color: var(--accent); color: #fff; }
+      button.primary { background: var(--accent); border-color: var(--accent); color: #0b0d12; font-weight: 600; }
+      .footer { position: fixed; bottom: 18px; color: #56607f; font-size: 11px; }
+      .hidden { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+          <rect x="240" y="330" width="544" height="70" rx="35" fill="#7aa2ff" />
+          <rect x="330" y="330" width="78" height="360" rx="39" fill="#e8ecff" />
+          <rect x="616" y="330" width="78" height="300" rx="39" fill="#8f9bd6" />
+          <circle cx="512" cy="760" r="34" fill="#7aa2ff" opacity="0.55" />
+        </svg>
+      </div>
+      <h1>Pi Web</h1>
+      <div class="status" id="status">正在启动…</div>
+      <div class="bar" id="bar"><i></i></div>
+
+      <div class="error" id="error">
+        <div class="msg" id="error-msg"></div>
+        <div class="status" id="error-detail" style="margin-bottom: 10px"></div>
+        <pre id="error-tail"></pre>
+        <div class="actions">
+          <button class="primary" id="retry">重试</button>
+          <button id="logs">打开日志</button>
+          <button id="quit">退出</button>
+        </div>
+      </div>
+      <div class="footer" id="footer">Pi Web Desktop</div>
+    </div>
+
+    <script>
+      // withGlobalTauri = true 时 window.__TAURI__ 可用；这个页面是唯一的本地 origin，
+      // 所以能用 IPC；导航到 pi-web 之后就不再需要任何 IPC。
+      const api = window.__TAURI__;
+      const $ = (id) => document.getElementById(id);
+      const statusEl = $("status");
+      const barEl = $("bar");
+      const errorEl = $("error");
+      const errorMsg = $("error-msg");
+      const errorDetail = $("error-detail");
+      const errorTail = $("error-tail");
+
+      function showRunning(phase) {
+        errorEl.style.display = "none";
+        barEl.classList.remove("hidden");
+        statusEl.classList.remove("hidden");
+        if (phase === "spawning") statusEl.textContent = "正在启动本地服务…";
+        else if (phase === "starting") statusEl.textContent = "正在准备运行时…";
+        else if (phase === "attached") statusEl.textContent = "正在连接已在运行的实例…";
+      }
+
+      function showReady(payload) {
+        barEl.classList.add("hidden");
+        statusEl.innerHTML = "已就绪，正在载入界面…<br><strong>" + (payload.url || "") + "</strong>";
+      }
+
+      function showFailed(payload) {
+        barEl.classList.add("hidden");
+        statusEl.classList.add("hidden");
+        errorEl.style.display = "block";
+        errorMsg.textContent = payload.message || "启动失败";
+        errorDetail.textContent = payload.detail || "";
+        errorTail.textContent = (payload.tail || []).join("\n") || "（暂无日志）";
+        if (payload.port) $("footer").textContent = "Pi Web Desktop · 端口 " + payload.port;
+      }
+
+      function apply(payload) {
+        if (!payload) return;
+        if (payload.phase === "failed") showFailed(payload);
+        else if (payload.phase === "ready") showReady(payload);
+        else showRunning(payload.phase);
+        if (payload.version) $("footer").textContent = "Pi Web Desktop · 内置 pi-web v" + payload.version;
+      }
+
+      async function wire() {
+        if (!api) {
+          statusEl.textContent = "Tauri API 不可用（withGlobalTauri 未开启？）";
+          return;
+        }
+        try {
+          await api.event.listen("sidecar-status", (event) => apply(event.payload || {}));
+          // 事件可能早于本页加载（Rust 线程先跑），主动拉一次当前状态
+          apply(await api.core.invoke("get_status"));
+        } catch (error) {
+          statusEl.textContent = "事件监听失败：" + error;
+        }
+        $("retry").onclick = async () => {
+          statusEl.classList.remove("hidden");
+          statusEl.textContent = "正在重启…";
+          errorEl.style.display = "none";
+          barEl.classList.remove("hidden");
+          try {
+            await api.core.invoke("restart_sidecar");
+          } catch (error) {
+            showFailed({ message: "重启失败", detail: String(error), tail: [] });
+          }
+        };
+        $("logs").onclick = () => api.core.invoke("open_logs").catch(() => {});
+        $("quit").onclick = () => api.core.invoke("quit_app").catch(() => {});
+      }
+
+      wire();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,549 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+//! Pi Web Desktop —— pi-web 的 Tauri 2 壳。
+//!
+//! 一次启动的完整链路：
+//!   splash 窗口 → 清理上次孤儿 → 附着同版本实例 或 起侧车 → 探活 `GET /`
+//!   → 导航到 http://127.0.0.1:<port>/ → 运行期健康监控 → 退出时收进程组
+//!
+//! 这里刻意不给 pi-web 页面开任何 Tauri IPC：它是远程 origin，v1 只需要
+//! 原生窗口/菜单/生命周期，不需要网页与 Rust 通信。
+
+mod discovery;
+mod logging;
+mod menu;
+mod probe;
+mod sidecar;
+
+use serde::Serialize;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tauri::webview::{DownloadEvent, NewWindowResponse};
+use tauri::{Emitter, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Mode {
+    Starting,
+    Spawned,
+    Attached,
+    Failed,
+}
+
+pub struct AppState {
+    pub mode: Mutex<Mode>,
+    /// 允许导航到的服务端口（附着模式会变成对方端口）
+    pub allowed_port: Arc<Mutex<Option<u16>>>,
+    /// 当前服务地址（菜单"在浏览器中打开 / 复制地址"用）
+    pub current_url: Arc<Mutex<Option<String>>>,
+    pub sidecar: Mutex<Option<sidecar::Running>>,
+    /// 最后一次状态：splash 页面加载可能晚于事件发出，加载后主动拉一次
+    pub last_status: Mutex<Option<StatusPayload>>,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            mode: Mutex::new(Mode::Starting),
+            allowed_port: Arc::new(Mutex::new(None)),
+            current_url: Arc::new(Mutex::new(None)),
+            sidecar: Mutex::new(None),
+            last_status: Mutex::new(None),
+        }
+    }
+}
+
+#[derive(Serialize, Clone)]
+struct StatusPayload {
+    phase: String,
+    message: String,
+    detail: Option<String>,
+    url: Option<String>,
+    port: Option<u16>,
+    version: Option<String>,
+    mode: Option<String>,
+    tail: Vec<String>,
+}
+
+fn emit_status(app: &tauri::AppHandle, payload: StatusPayload) {
+    if let Ok(mut slot) = app.state::<AppState>().last_status.lock() {
+        *slot = Some(payload.clone());
+    }
+    let _ = app.emit("sidecar-status", payload);
+}
+
+fn status(app: &tauri::AppHandle, phase: &str, message: impl Into<String>) {
+    let message = message.into();
+    logging::line("app", &format!("[{phase}] {message}"));
+    emit_status(
+        app,
+        StatusPayload {
+            phase: phase.to_string(),
+            message,
+            detail: None,
+            url: None,
+            port: None,
+            version: None,
+            mode: None,
+            tail: Vec::new(),
+        },
+    );
+}
+
+fn status_failed(app: &tauri::AppHandle, message: impl Into<String>, detail: impl Into<String>) {
+    let message = message.into();
+    let detail = detail.into();
+    logging::line("app", &format!("[failed] {message} / {detail}"));
+    emit_status(
+        app,
+        StatusPayload {
+            phase: "failed".to_string(),
+            message,
+            detail: Some(detail),
+            url: None,
+            port: None,
+            version: None,
+            mode: None,
+            tail: logging::tail(30),
+        },
+    );
+}
+
+fn status_ready(app: &tauri::AppHandle, url: &str, port: u16, version: &str, mode: &str) {
+    logging::line("app", &format!("[ready] {url}（{mode}）"));
+    emit_status(
+        app,
+        StatusPayload {
+            phase: "ready".to_string(),
+            message: format!("已就绪：{url}"),
+            detail: None,
+            url: Some(url.to_string()),
+            port: Some(port),
+            version: Some(version.to_string()),
+            mode: Some(mode.to_string()),
+            tail: Vec::new(),
+        },
+    );
+}
+
+fn navigate_main(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
+    let parsed = Url::parse(url).map_err(|e| format!("服务地址不合法：{e}"))?;
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "主窗口不存在".to_string())?;
+    window
+        .navigate(parsed)
+        .map_err(|e| format!("导航失败：{e}"))?;
+    if let Ok(mut current) = app.state::<AppState>().current_url.lock() {
+        *current = Some(url.to_string());
+    }
+    Ok(())
+}
+
+pub fn current_url(app: &tauri::AppHandle) -> Option<String> {
+    app.state::<AppState>()
+        .current_url
+        .lock()
+        .ok()
+        .and_then(|u| u.clone())
+}
+
+fn url_allowed(allowed_port: &Arc<Mutex<Option<u16>>>, url: &Url) -> bool {
+    if url.scheme() == "tauri" {
+        return true;
+    }
+    if url.scheme() != "http" {
+        return false;
+    }
+    let port = allowed_port.lock().ok().and_then(|p| *p);
+    match (url.host_str(), port) {
+        (Some("127.0.0.1") | Some("localhost"), Some(expected)) => url.port() == Some(expected),
+        _ => false,
+    }
+}
+
+/// 恢复上一次"没链接到底"的体验：直接问用户怎么办，而不是白屏。
+fn decide_on_mismatch(app: &tauri::AppHandle, existing: &discovery::ExistingInstance, ours: &str) -> bool {
+    let message = format!(
+        "检测到本机已在运行 pi-web v{}（{}），本应用内置的是 v{ours}。\n\n连接已有实例 = 与浏览器/命令行共享同一个服务；启动独立实例 = 用内置版本另起一个（可能与已有实例同时操作同一份会话）。",
+        existing.version, existing.url
+    );
+    // blocking_show() 返回 bool：true = 第一个按钮（"连接已有实例"）
+    app.dialog()
+        .message(message)
+        .title("Pi Web Desktop")
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "连接已有实例".to_string(),
+            "启动独立实例".to_string(),
+        ))
+        .blocking_show()
+}
+
+fn run_launch(app: tauri::AppHandle) {
+    let state = app.state::<AppState>();
+    status(&app, "starting", "正在准备运行时…");
+
+    sidecar::cleanup_previous(&app);
+
+    let sidecar = match sidecar::resolve(&app) {
+        Ok(s) => s,
+        Err(error) => {
+            status_failed(&app, "找不到内置的 pi-web 运行时", error.clone());
+            // true = 第一个按钮「退出」
+            if app
+                .dialog()
+                .message(error)
+                .title("Pi Web Desktop 启动失败")
+                .buttons(MessageDialogButtons::OkCancelCustom(
+                    "退出".to_string(),
+                    "查看日志".to_string(),
+                ))
+                .blocking_show()
+            {
+                app.exit(1);
+            } else {
+                use tauri_plugin_opener::OpenerExt;
+                if let Some(path) = logging::path() {
+                    if let Some(dir) = path.parent() {
+                        let _ = app.opener().open_path(dir.to_string_lossy().to_string(), None::<&str>);
+                    }
+                }
+            }
+            return;
+        }
+    };
+    let config = sidecar::Config::load(&app);
+
+    // 1) 附着同版本实例：避免两份服务同时写同一份会话文件
+    if config.attach_policy != "never" {
+        if let Some(existing) = discovery::find_matching(&sidecar.version) {
+            status(&app, "attached", format!("已连接本机运行的 pi-web v{}（{}）", existing.version, existing.url));
+            if let Ok(mut port) = state.allowed_port.lock() {
+                *port = Some(existing.port);
+            }
+            if let Ok(mut mode) = state.mode.lock() {
+                *mode = Mode::Attached;
+            }
+            status_ready(&app, &existing.url, existing.port, &existing.version, "attached");
+            if let Err(error) = navigate_main(&app, &existing.url) {
+                status_failed(&app, "连接已有实例失败", error);
+            }
+            spawn_health_monitor(app.clone(), existing.port);
+            return;
+        }
+        if let Some(foreign) = discovery::find_foreign(&sidecar.version) {
+            if decide_on_mismatch(&app, &foreign, &sidecar.version) {
+                logging::line("app", &format!("用户选择连接 v{} 实例", foreign.version));
+                if let Ok(mut port) = state.allowed_port.lock() {
+                    *port = Some(foreign.port);
+                }
+                if let Ok(mut mode) = state.mode.lock() {
+                    *mode = Mode::Attached;
+                }
+                status_ready(&app, &foreign.url, foreign.port, &foreign.version, "attached");
+                let _ = navigate_main(&app, &foreign.url);
+                spawn_health_monitor(app.clone(), foreign.port);
+                return;
+            }
+            logging::line("app", "用户选择启动独立实例");
+        }
+    }
+
+    // 2) 起自己的侧车
+    let port = sidecar::pick_port(config.port);
+    if port != config.port {
+        logging::line(
+            "app",
+            &format!("端口 {} 被占用，改用 {port} 并写入 config", config.port),
+        );
+        let mut updated = config.clone();
+        updated.port = port;
+        updated.save(&app);
+    }
+
+    status(&app, "spawning", format!("正在启动 pi-web v{}（端口 {port}）…", sidecar.version));
+    let running = match sidecar::spawn(&sidecar, &config, port) {
+        Ok(r) => r,
+        Err(error) => {
+            status_failed(&app, "启动侧车失败", error);
+            return;
+        }
+    };
+    let launcher_pid = running.launcher_pid;
+    sidecar::write_own_state(&app, &running);
+    if let Ok(mut stored) = state.sidecar.lock() {
+        *stored = Some(running);
+    }
+    if let Ok(mut allowed) = state.allowed_port.lock() {
+        *allowed = Some(port);
+    }
+    if let Ok(mut mode) = state.mode.lock() {
+        *mode = Mode::Spawned;
+    }
+
+    // 3) 等就绪（launcher 已退出 = 起不来）
+    let should_stop = || {
+        let state = app.state::<AppState>();
+        let mut guard = state.sidecar.lock().unwrap();
+        match guard.as_mut() {
+            Some(running) => !matches!(running.child.try_wait(), Ok(None)),
+            None => true,
+        }
+    };
+    let ready = probe::wait_ready(port, Duration::from_secs(90), &should_stop);
+    match ready {
+        probe::ReadyResult::Ready(elapsed) => {
+            logging::line("app", &format!("服务就绪用时 {}ms（launcher pid {launcher_pid}）", elapsed.as_millis()));
+            let url = format!("http://127.0.0.1:{port}/");
+            status_ready(&app, &url, port, &sidecar.version, "spawned");
+            if let Err(error) = navigate_main(&app, &url) {
+                status_failed(&app, "导航失败", error);
+            }
+            spawn_health_monitor(app.clone(), port);
+        }
+        probe::ReadyResult::Timeout(elapsed) => {
+            let detail = format!(
+                "等了 {}s 仍没有 HTTP 应答。日志尾部见下；常见原因：端口被占、被杀软拦截、侧车文件不完整。",
+                elapsed.as_secs()
+            );
+            status_failed(&app, "pi-web 启动超时", detail);
+        }
+        probe::ReadyResult::Stopped => {
+            status_failed(&app, "pi-web 进程提前退出", "launcher 已退出，请看日志尾部。");
+        }
+    }
+}
+
+static HEALTH_MONITOR_STARTED: AtomicBool = AtomicBool::new(false);
+
+/// 运行期健康监控：连续 3 次探测失败才认为真的挂了（避免瞬时抖动误报）。
+fn spawn_health_monitor(app: tauri::AppHandle, port: u16) {
+    if HEALTH_MONITOR_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(10));
+        let is_attached = matches!(*app.state::<AppState>().mode.lock().unwrap(), Mode::Attached);
+        if !probe::http_answers(port, Duration::from_millis(800)) {
+            logging::line("health", &format!("端口 {port} 无应答，连续计数 +1"));
+            std::thread::sleep(Duration::from_secs(5));
+            if probe::http_answers(port, Duration::from_millis(800)) {
+                continue;
+            }
+            std::thread::sleep(Duration::from_secs(5));
+            if probe::http_answers(port, Duration::from_millis(800)) {
+                continue;
+            }
+            status_failed(
+                &app,
+                "pi-web 服务已停止响应",
+                if is_attached {
+                    "外部实例可能被别处停掉了。可以改用独立实例，或退出后重开。"
+                } else {
+                    "侧车进程可能崩溃或被 `pi-web stop` 停掉。点重试可重启服务。"
+                },
+            );
+            let restart = app
+                .dialog()
+                .message("pi-web 服务已停止响应。")
+                .title("Pi Web Desktop")
+                .buttons(MessageDialogButtons::OkCancelCustom(
+                    "重启服务".to_string(),
+                    "忽略".to_string(),
+                ))
+                .blocking_show();
+            if restart {
+                let _ = restart_sidecar_now(&app);
+            }
+        }
+    });
+}
+
+fn stop_current(app: &tauri::AppHandle) {
+    let state = app.state::<AppState>();
+    let running = state.sidecar.lock().ok().and_then(|mut guard| guard.take());
+    if let Some(running) = running {
+        sidecar::stop(running);
+    }
+    sidecar::clear_own_state(app);
+    *state.allowed_port.lock().unwrap() = None;
+}
+
+pub fn restart_sidecar_now(app: &tauri::AppHandle) -> Result<(), String> {
+    logging::line("app", "重启侧车");
+    stop_current(app);
+    HEALTH_MONITOR_STARTED.store(false, Ordering::SeqCst);
+    let handle = app.clone();
+    std::thread::spawn(move || run_launch(handle));
+    Ok(())
+}
+
+// ---------------------------------------------------------------- commands
+
+#[tauri::command]
+fn get_status(state: tauri::State<'_, AppState>) -> Option<StatusPayload> {
+    state.last_status.lock().ok().and_then(|s| s.clone())
+}
+
+#[tauri::command]
+fn restart_sidecar(app: tauri::AppHandle) -> Result<(), String> {
+    restart_sidecar_now(&app)
+}
+
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    stop_current(&app);
+    app.exit(0);
+}
+
+#[tauri::command]
+fn open_logs(app: tauri::AppHandle) {
+    use tauri_plugin_opener::OpenerExt;
+    if let Some(path) = logging::path() {
+        if let Some(dir) = path.parent() {
+            let _ = app.opener().open_path(dir.to_string_lossy().to_string(), None::<&str>);
+        }
+    }
+}
+
+#[tauri::command]
+fn open_in_browser(app: tauri::AppHandle) {
+    use tauri_plugin_opener::OpenerExt;
+    if let Some(url) = current_url(&app) {
+        let _ = app.opener().open_url(url, None::<&str>);
+    }
+}
+
+fn new_window_for(app: &tauri::AppHandle, url: Url) -> Result<tauri::WebviewWindow<tauri::Wry>, String> {
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let label = format!("page-{}", COUNTER.fetch_add(1, Ordering::Relaxed) + 1);
+    let window = WebviewWindowBuilder::new(app, label, WebviewUrl::External(url.clone()))
+        .title(url.as_str())
+        .inner_size(1100.0, 820.0)
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok(window)
+}
+
+fn downloads_destination(app: &tauri::AppHandle, url: &Url) -> std::path::PathBuf {
+    let file_name = url
+        .path_segments()
+        .and_then(|mut s| s.next_back())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("pi-web-download");
+    let base = app
+        .path()
+        .download_dir()
+        .unwrap_or_else(|_| std::env::temp_dir());
+    base.join(file_name)
+}
+
+fn main() {
+    let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .manage(AppState::default())
+        .invoke_handler(tauri::generate_handler![
+            get_status,
+            restart_sidecar,
+            quit_app,
+            open_logs,
+            open_in_browser
+        ])
+        .menu(|app| menu::build(app))
+        .on_menu_event(|app, event| menu::on_event(app, event))
+        .setup(|app| {
+            let handle = app.handle().clone();
+
+            if let Ok(log_dir) = app.path().app_log_dir() {
+                if let Ok(path) = logging::init(log_dir) {
+                    logging::line("app", &format!("日志：{}", path.display()));
+                }
+            }
+            logging::line(
+                "app",
+                &format!(
+                    "启动 Pi Web Desktop {}（{} {}）",
+                    env!("CARGO_PKG_VERSION"),
+                    std::env::consts::OS,
+                    std::env::consts::ARCH
+                ),
+            );
+
+            let window_config = app
+                .config()
+                .app
+                .windows
+                .first()
+                .cloned()
+                .ok_or_else(|| "tauri.conf.json 里缺少窗口配置".to_string())?;
+
+            let allowed_port = app.state::<AppState>().allowed_port.clone();
+
+            let nav_guard = allowed_port.clone();
+            let new_window_app = handle.clone();
+            let new_window_guard = allowed_port.clone();
+
+            let window = WebviewWindowBuilder::from_config(&handle, &window_config)?
+                .on_navigation(move |url| url_allowed(&nav_guard, url))
+                .on_new_window(move |url, _features| {
+                    if url_allowed(&new_window_guard, &url) {
+                        match new_window_for(&new_window_app, url) {
+                            Ok(window) => NewWindowResponse::Create { window },
+                            Err(error) => {
+                                logging::line("nav", &format!("开新窗口失败：{error}"));
+                                NewWindowResponse::Deny
+                            }
+                        }
+                    } else {
+                        use tauri_plugin_opener::OpenerExt;
+                        let _ = new_window_app.opener().open_url(url.as_str(), None::<&str>);
+                        NewWindowResponse::Deny
+                    }
+                })
+                .on_download(|webview, event| {
+                    match event {
+                        DownloadEvent::Requested { url, destination } => {
+                            let app = webview.app_handle();
+                            *destination = downloads_destination(app, &url);
+                            logging::line("download", &format!("下载 {url} -> {}", destination.display()));
+                            true
+                        }
+                        DownloadEvent::Finished { url, path, success } => {
+                            logging::line(
+                                "download",
+                                &format!("下载结束 {url} success={success} path={path:?}"),
+                            );
+                            true
+                        }
+                        _ => true,
+                    }
+                })
+                .build()?;
+            let _ = window.show();
+
+            std::thread::spawn(move || run_launch(handle));
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .expect("初始化 Tauri 应用失败");
+
+    app.run(|app, event| match event {
+        RunEvent::ExitRequested { .. } | RunEvent::Exit => {
+            let state = app.state::<AppState>();
+            let running = state.sidecar.lock().ok().and_then(|mut guard| guard.take());
+            if let Some(running) = running {
+                sidecar::stop(running);
+            }
+            sidecar::clear_own_state(app);
+        }
+        _ => {}
+    });
+}

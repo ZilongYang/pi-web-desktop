@@ -17,6 +17,27 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 use tauri::Manager;
 
+/// 不依赖 AppHandle 的配置目录（sidecar 模块在配置加载之外也要用）。
+mod app_dirs {
+    use std::path::PathBuf;
+
+    pub fn config_dir() -> Option<PathBuf> {
+        if let Some(dir) = std::env::var_os("PIWEB_CONFIG_DIR") {
+            return Some(PathBuf::from(dir));
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let home = crate::discovery::home_dir()?;
+            return Some(home.join("Library/Application Support/com.zilong.piweb.desktop"));
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let home = crate::discovery::home_dir()?;
+            Some(home.join(".config/pi-web-desktop"))
+        }
+    }
+}
+
 pub const PORT_CANDIDATES: u16 = 10;
 /// 自己的默认端口刻意与 pi-web CLI 的 30141 错开：否则桌面版先占了 30141，
 /// 终端里再 `npx @agegr/pi-web` 就会撞端口。同版本实例在跑时走附着，不受影响。
@@ -39,6 +60,15 @@ pub struct Config {
     /// 默认不设，即共享 ~/.pi/agent
     #[serde(default)]
     pub pi_coding_agent_dir: Option<String>,
+    /// 是否继承登录 shell 的 PATH（默认 true）。
+    /// GUI 启动的 app 只有 /usr/bin:/bin:/usr/sbin:/sbin，nvm/pnpm/asdf 这些只在
+    /// 交互式 shell 的 rc 里才会写进 PATH，所以这里跑一次 `zsh -lic` 取回来。
+    #[serde(default = "default_true")]
+    pub inherit_login_shell_path: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_port() -> u16 {
@@ -56,6 +86,7 @@ impl Default for Config {
             proxy: None,
             extra_env: HashMap::new(),
             pi_coding_agent_dir: None,
+            inherit_login_shell_path: true,
         }
     }
 }
@@ -204,30 +235,280 @@ pub struct Running {
     pub launcher_pid: u32,
 }
 
-fn path_with_runtime(sidecar: &Sidecar) -> String {
-    let mut parts: Vec<PathBuf> = vec![sidecar
-        .node
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_default()];
+/// 跑一次登录 shell，把交互式 rc 写进 PATH 的结果取回来。
+///
+/// 为什么必须这么干：从 Finder/Dock 启动的 GUI 进程只继承
+/// `/usr/bin:/bin:/usr/sbin:/sbin`，而 nvm / pnpm / asdf / volta / deno 这些
+/// 都是 `.zshrc` 里自己 append 的 —— 不取登录 shell 的 PATH，pi agent 在会话里
+/// 就看不到 `mnemon`、`pnpm`、`node`(nvm 版) 这些命令。
+///
+/// 用 `-l`（读 .zprofile）+ `-i`（读 .zshrc）+ `-c`；stderr 丢掉（starship 之类
+/// 会往 stderr 打 TERM=dumb 的抱怨），只认 stdout 里最后一行像 PATH 的内容。
+/// 2s 超时，失败就当作没有，退回内置列表，绝不让壳启动被 rc 拖死。
+fn login_path_cache_file() -> Option<PathBuf> {
+    app_dirs::config_dir().map(|d| d.join("login-path.txt"))
+}
+
+/// 从 `zsh -lic` 拿登录 shell 的 PATH；失败/超时返回 None。
+///
+/// 实测：从 Finder 启动的 .app 里这一条会**卡住**（同一条命令在终端里 0.3–1.2s 就回），
+/// 所以这里只等 1.2s；拿到就缓存到 app config 目录，下次启动直接用缓存，不再付这个时间。
+fn probe_login_shell_path() -> Option<String> {
+    if !cfg!(unix) {
+        return None;
+    }
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let started = Instant::now();
+    let mut child = match Command::new(&shell)
+        .arg("-lic")
+        .arg("printf %s \"$PATH\"")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) => {
+            crate::logging::line("path", &format!("无法启动登录 shell {shell}：{error}"));
+            return None;
+        }
+    };
+
+    let deadline = Instant::now() + Duration::from_millis(1200);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                crate::logging::line(
+                    "path",
+                    &format!(
+                        "登录 shell 取 PATH 超过 1.2s（已等 {}ms），放弃；改用缓存/常见目录兜底",
+                        started.elapsed().as_millis()
+                    ),
+                );
+                return None;
+            }
+        }
+    }
+
+    let mut out = String::new();
+    use std::io::Read;
+    child.stdout.take()?.read_to_string(&mut out).ok()?;
+    let candidate = out
+        .lines()
+        .rev()
+        .find(|line| line.contains('/') && line.contains(':'))?
+        .trim()
+        .to_string();
+    if candidate.matches('/').count() < 2 {
+        return None;
+    }
+    crate::logging::line(
+        "path",
+        &format!(
+            "登录 shell PATH 取回 {} 项（{}ms）",
+            candidate.split(':').count(),
+            started.elapsed().as_millis()
+        ),
+    );
+    Some(candidate)
+}
+
+static LOGIN_PATH_PROBE_STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+/// 后台跑一次登录 shell 探测，成功后写缓存给下次启动用。
+/// 不在启动路径上等它：GUI 启动时这条命令实测会卡住（同一命令在终端里 0.3–1.2s 就回）。
+fn trigger_login_path_probe() {
+    if LOGIN_PATH_PROBE_STARTED.set(()).is_err() {
+        return;
+    }
+    std::thread::spawn(|| {
+        if let Some(path) = probe_login_shell_path() {
+            write_login_path_cache(&path);
+            crate::logging::line("path", "登录 shell PATH 已缓存，下次启动生效");
+        }
+    });
+}
+
+fn read_login_path_cache() -> Option<String> {
+    let path = login_path_cache_file()?;
+    let text = std::fs::read_to_string(&path).ok()?;
+    let text = text.trim().to_string();
+    if text.matches('/').count() < 2 {
+        return None;
+    }
+    let age = std::fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())?;
+    if age > Duration::from_secs(7 * 24 * 3600) {
+        return None;
+    }
+    Some(text)
+}
+
+fn write_login_path_cache(value: &str) {
+    let Some(path) = login_path_cache_file() else { return };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, value);
+}
+
+/// 读不到登录 shell 时的兜底：把常见的版本管理器/用户级 bin 目录按优先级列出来。
+/// 这一步是纯 readdir，零开销，保证即使 `zsh -lic` 卡住，nvm（mnemon/pnpm）、
+/// homebrew、deno、go 这些也照样在 PATH 里。
+fn fallback_user_bin_dirs() -> Vec<PathBuf> {
+    let Some(home) = crate::discovery::home_dir() else {
+        return Vec::new();
+    };
+    let mut dirs: Vec<PathBuf> = Vec::new();
+
+    // 1) 用户级 bin 排在最前，顺序对齐常见的登录 shell PATH：
+    //    终端里 `node` 命中的是 ~/.local/bin/node（不是 nvm 那个），这里保持一致。
+    for relative in [
+        ".local/bin",
+        ".mimocode/bin",
+        ".codebuddy/bin",
+        ".minimax/bin",
+        ".kimi-code/bin",
+        ".opencode/bin",
+        ".mavis/bin",
+        "bin",
+        "flutter/bin",
+        ".dotnet/tools",
+        ".deno/bin",
+        ".bun/bin",
+        ".cargo/bin",
+        "go/bin",
+        "anaconda3/condabin",
+        "miniconda3/condabin",
+        ".orbstack/bin",
+        ".x-cmd.root/bin",
+        "Library/pnpm/bin",
+        "Library/pnpm",
+        ".volta/bin",
+        ".asdf/shims",
+        ".local/share/mise/shims",
+        ".fnm/aliases/default/bin",
+        ".nodenv/shims",
+    ] {
+        dirs.push(home.join(relative));
+    }
+
+    // 2) nvm：优先 alias/default 指向的那个"当前版本"，其余按版本号从新到旧。
+    let active = std::fs::read_to_string(home.join(".nvm/alias/default"))
+        .ok()
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty());
+    let nvm_root = home.join(".nvm/versions/node");
+    if let Ok(entries) = std::fs::read_dir(&nvm_root) {
+        let mut versions: Vec<(Vec<u32>, String, PathBuf)> = entries
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name().to_string_lossy().to_string();
+                let numbers: Vec<u32> = name
+                    .trim_start_matches('v')
+                    .split('.')
+                    .filter_map(|part| part.parse::<u32>().ok())
+                    .collect();
+                if numbers.is_empty() {
+                    return None;
+                }
+                Some((numbers, name, entry.path().join("bin")))
+            })
+            .collect();
+        let is_active = |name: &str| {
+            active.as_deref().map_or(false, |alias| {
+                name == format!("v{alias}") || name.starts_with(&format!("v{alias}.")) || name.contains(alias)
+            })
+        };
+        versions.sort_by(|a, b| {
+            is_active(&b.1)
+                .cmp(&is_active(&a.1))
+                .then_with(|| b.0.cmp(&a.0))
+        });
+        dirs.extend(versions.into_iter().map(|(_, _, path)| path));
+    }
+
+    // 3) 系统/包管理器目录
+    for absolute in [
+        "/opt/homebrew/bin",
+        "/opt/homebrew/sbin",
+        "/usr/local/bin",
+        "/usr/local/go/bin",
+        "/usr/local/share/dotnet",
+    ] {
+        dirs.push(PathBuf::from(absolute));
+    }
+    // 最后的兜底：本机 node 二进制所在（~/.local/bin/node 是它的软链）
+    dirs.push(home.join(".hermes/node/bin"));
+    dirs
+}
+
+/// 最终给侧车的 PATH：登录 shell（或缓存）→ 常见用户目录兜底 → 继承值 → 包内 runtime（最后）。
+///
+/// 包内 runtime 放最后是刻意的：侧车自己用 `runtime/node` 的绝对路径启动，不依赖 PATH；
+/// 而会话里执行的命令应该和终端一致（你终端里 `node` 是 ~/.local/bin 那个 v22，
+/// `pnpm`/`mnemon` 是 nvm 里的），包内 Node 只做"用户完全没有 node"时的兜底。
+fn path_with_runtime(sidecar: &Sidecar, config: &Config) -> String {
+    let mut parts: Vec<PathBuf> = Vec::new();
+    let mut source = "内置目录";
+
+    if config.inherit_login_shell_path {
+        if let Some(cached) = read_login_path_cache() {
+            part_extend(&mut parts, &cached);
+            source = "登录 shell 缓存";
+        } else {
+            // 首次启动（或缓存过期）：不等登录 shell，直接用常见目录 + 后台探测
+            for dir in fallback_user_bin_dirs() {
+                parts.push(dir);
+            }
+            source = "常见目录兜底（登录 shell 后台探测中）";
+            trigger_login_path_probe();
+        }
+    }
+    if parts.is_empty() {
+        for dir in fallback_user_bin_dirs() {
+            parts.push(dir);
+        }
+        source = "常见目录兜底";
+    }
+
     if let Some(existing) = std::env::var_os("PATH") {
         parts.extend(std::env::split_paths(&existing));
     }
-    // GUI 启动的 app 只有 /usr/bin:/bin:/usr/sbin:/sbin，补上包管理器与用户 bin
-    if let Some(home) = crate::discovery::home_dir() {
-        parts.push(home.join(".local/bin"));
-        parts.push(home.join(".bun/bin"));
-        parts.push(home.join(".cargo/bin"));
-        parts.push(home.join(".hermes/node/bin"));
+    if let Some(runtime_dir) = sidecar.node.parent() {
+        parts.push(runtime_dir.to_path_buf());
     }
-    for dir in ["/opt/homebrew/bin", "/usr/local/bin"] {
-        parts.push(PathBuf::from(dir));
-    }
+
     let mut seen = std::collections::HashSet::new();
     parts.retain(|p| !p.as_os_str().is_empty() && seen.insert(p.clone()));
-    std::env::join_paths(parts)
+    let joined = std::env::join_paths(parts)
         .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+    let entries: Vec<&str> = joined.split(':').collect();
+    let has_nvm = entries.iter().any(|e| e.contains(".nvm/"));
+    let has_mnemon = entries.iter().any(|dir| Path::new(dir).join("mnemon").is_file());
+    crate::logging::line(
+        "path",
+        &format!(
+            "侧车 PATH {} 项（来源：{source}，nvm {}，mnemon {}）：{}",
+            entries.len(),
+            if has_nvm { "在" } else { "不在" },
+            if has_mnemon { "可见" } else { "不可见" },
+            entries.iter().take(6).copied().collect::<Vec<_>>().join(" : ")
+        ),
+    );
+    joined
+}
+
+fn part_extend(parts: &mut Vec<PathBuf>, joined_path: &str) {
+    parts.extend(std::env::split_paths(joined_path));
 }
 
 pub fn spawn(sidecar: &Sidecar, config: &Config, port: u16) -> Result<Running, String> {
@@ -253,7 +534,7 @@ pub fn spawn(sidecar: &Sidecar, config: &Config, port: u16) -> Result<Running, S
         .env("LANG", "en_US.UTF-8")
         .env("LC_ALL", "en_US.UTF-8")
         .env("TERM", "xterm-256color")
-        .env("PATH", path_with_runtime(sidecar));
+        .env("PATH", path_with_runtime(sidecar, config));
 
     if let Some(proxy) = config.proxy.as_ref().filter(|p| !p.trim().is_empty()) {
         command

@@ -71,7 +71,13 @@ cargo build                 # 调试构建
 ## 已知差异 / 注意事项
 
 - **没有 Service Worker**：macOS 的 WKWebView 不支持 SW（Tauri 无法开 App-Bound Domains），pi-web 的 `sw.js` 注册会失败，页面功能不受影响，只是没有离线缓存。
-- **自己跑的命令环境不同**：从 Dock/Finder 启动的 app 没有终端的 `PATH` 与 locale。壳会把默认 PATH 补全（homebrew、`~/.local/bin`、`~/.bun/bin`、`~/.cargo/bin`）并设 `LANG=en_US.UTF-8`，如果你的项目依赖别的 shell 配置（nvm/asdf 等），在 `extra_env` 里补 `PATH`。
+- **`PATH` 怎么来的**：从 Dock/Finder 启动的 app 只有 `/usr/bin:/bin:/usr/sbin:/sbin`，终端里的 `PATH`（nvm、pnpm、deno、go、x-cmd…）全是 `.zshrc` 自己加的。所以侧车启动时的 `PATH` 按这个顺序拼：
+  1. 登录 shell 的 `PATH` 缓存（`~/Library/Application Support/com.zilong.piweb.desktop/login-path.txt`，7 天有效）；
+  2. 没有缓存时用「常见目录兜底」（nvm 各版本按 `~/.nvm/alias/default` 优先、volta/asdf/mise/fnm、pnpm、deno、go、conda、orbstack、x-cmd…），同时**后台**跑一次 `zsh -lic 'printf %s "$PATH"'` 写缓存给下次启动用（GUI 里这条命令实测会卡 1s 上下，所以不阻塞启动）；
+  3. 进程继承来的 `PATH`；
+  4. 最后才是包内 `runtime`（保证你机器上完全没有 node 时也能跑；正常情况用你自己的 node，和终端一致）。
+
+  实测结果：侧车里 `node`/`pnpm`/`mnemon`/`git`/`python3`/`go`/`deno` 的解析结果与终端**完全一致**。想换规则：`config.json` 里 `inherit_login_shell_path: false` 就只用兜底目录；删掉上面的缓存文件可强制重新探测。
 - **TCC 授权**：项目放在 `~/Documents`、`~/Desktop`、`~/Downloads` 时，首次访问会弹系统授权，允许后才会出现在文件树里。
 - **`pi-web stop` 会停掉桌面版的服务**：因为共用同一套 run record；健康监控会弹窗，点「重启服务」即可。
 - **首次启动会重写 `Resources/pi-web/app/node_modules/@agegr/pi-web/.next/prerender-manifest.json`**（pi-web launcher 轮换 preview 密钥的安全设计）。之后 `codesign --deep --strict` 会因这一个数据文件报签名不符；签名校验请在本机首次运行**之前**做，或改用 Developer ID + 重新签名的发布流程。

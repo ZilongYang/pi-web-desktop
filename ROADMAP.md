@@ -50,6 +50,28 @@
   `MenuItemBuilder::with_id("check_update", "检查更新…")`，复用现有 `manual_check_all`。
 - **状态**：App 菜单第二项即「检查更新…」；「Pi Web」菜单里也保留入口。
 
+#### F15. 「关于」里显示 pi-web 版本（2026-11-03 记录）
+
+- **现状**：菜单 `Pi Web Desktop → 关于` 只有 App 名称 + 版本（`menu.rs` 里的 `AboutMetadata { name, version }`），看不到它内置的 pi-web / pi SDK / Node 版本，排障时要翻日志或看文件。
+- **目标**：关于面板里显示 **`Pi Web Desktop 0.2.x` / `pi-web 0.14.x` / `pi SDK 1.5.x` / `Node 22.23.x`**。
+- **落点**：`src-tauri/src/menu.rs` 的 `AboutMetadata` 加 `credits: Some("内置 pi-web 0.14.2 · pi SDK 1.5.0 · Node 22.23.4")`（macOS 上 `comments`/`authors` 不支持，`credits` 支持）；数据直接复用 `crate::update::bundled_versions(app)`。
+- **备选**：自定义「关于」窗口（本地页面 `ui/about.html`），能放更多信息（版本列表 + GitHub/日志/配置文件链接），但要新增页面与窗口。
+- **验收**：关于面板能看到四个版本号。
+
+#### F16. 菜单栏图标 + 相关菜单（2026-11-03 记录）
+
+- **现状**：只有 Dock 图标，没有菜单栏（状态栏）图标；关窗即退出。
+- **目标**：菜单栏常驻小图标，点击弹出菜单：显示/隐藏主窗口 · 在浏览器中打开 · 检查更新… · 更新 pi-web… · 打开日志目录 · 退出；图标用模板图（`icon_as_template(true)`）以适配深浅色菜单栏。
+- **落点**：`src-tauri/Cargo.toml` 给 tauri 加 `tray-icon` feature；`main.rs` 用 `TrayIconBuilder` + 复用 `menu.rs` 里已有的动作函数；图标复用 `icons/32x32.png`（或做一张 18×18 模板图）。
+- **需要先定**：关窗行为是否改成「隐藏到菜单栏、不退出」（现在 `RunEvent::ExitRequested` 直接停侧车退出，pi-web 有后台任务时可能要保留）。
+- **验收**：菜单栏出现图标；点击能显示/隐藏窗口；菜单项与主菜单行为一致；退出时侧车被清理。
+
+#### F17. 菜单文案区分「应用更新」与「pi-web 更新」（2026-11-03 记录）
+
+- **现状**：菜单里有「检查更新…」和「更新 pi-web…」，用户容易混淆（"检查更新"其实会先查 App、跳过 App 更新后再查 pi-web）。
+- **目标**：改成「检查应用更新…」+「更新 pi-web…」，或在「检查更新…」的弹窗里先说明"将检查 App 与 pi-web 两项"。
+- **落点**：`src-tauri/src/menu.rs`（文案）与 `update.rs`（弹窗首句）。
+
 ### P1 — 功能验收与平台
 
 #### F3. 功能手测清单（决定能不能日常用）

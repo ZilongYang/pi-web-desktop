@@ -32,6 +32,8 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             true,
             &[
                 &PredefinedMenuItem::about(app, Some("关于 Pi Web Desktop"), Some(about_metadata))?,
+                // macOS 惯例：关于下面紧跟「检查更新…」
+                &MenuItemBuilder::with_id("check_update", "检查更新…").build(app)?,
                 &PredefinedMenuItem::separator(app)?,
                 &PredefinedMenuItem::services(app, Some("服务"))?,
                 &PredefinedMenuItem::separator(app)?,

@@ -17,7 +17,6 @@ use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
 const REGISTRY_URL: &str = "https://registry.npmjs.org/@agegr%2Fpi-web/latest";
-const SILENT_INTERVAL_SECS: u64 = 24 * 3600;
 const FETCH_TIMEOUT_SECS: &str = "8";
 
 /// 升级命令：放在提示里可一键复制。
@@ -37,6 +36,11 @@ struct CheckState {
     last_checked_at: Option<u64>,
     #[serde(default)]
     last_app_checked_at: Option<u64>,
+    /// 已经提醒过的版本（同一版本只弹一次，避免每次启动都打扰）
+    #[serde(default)]
+    notified_app_version: Option<String>,
+    #[serde(default)]
+    notified_piweb_version: Option<String>,
 }
 
 fn now_secs() -> u64 {
@@ -187,8 +191,9 @@ fn build_message(bundled: &BundledVersions, latest: &Result<String, String>) -> 
         Ok(latest) if upgrade_available(bundled, latest) => (
             format!(
                 "检测到新版 pi-web：{latest}（内置 {}）。\n\n{header}\n\n\
-                 pi SDK 由 pi-web 精确锁定，会跟着一起升级。\n\
-                 桌面版把 pi-web 打包在 .app 里，升级需要重新构建（约 2 分钟）：\n\n\
+                 pi SDK 由 pi-web 精确锁定，会跟着一起升级。\n\n\
+                 想现在就用上：菜单「Pi Web → 检查更新…」，可以直接下载并切换 pi-web（只换 pi-web，不重装 App）。\n\
+                 或者重新构建整个 App（约 2 分钟）：\n\n\
                  {UPGRADE_COMMAND}",
                 bundled.pi_web
             ),
@@ -281,16 +286,8 @@ pub fn manual_check(app: &tauri::AppHandle) {
     });
 }
 
-/// 启动时的静默检查：24h 一次；有新版才提示，没新版/失败都不打扰。
+/// 启动时的静默检查（npm 上的 pi-web）：**每次启动都查**；有新版才提示，失败不打扰。
 pub fn silent_check(app: &tauri::AppHandle) {
-    let state = read_state(app);
-    if let Some(last) = state.last_checked_at {
-        if now_secs().saturating_sub(last) < SILENT_INTERVAL_SECS {
-            crate::logging::line("update", "静默检查跳过（24h 内已查过）");
-            return;
-        }
-    }
-    // 先把时间戳写掉：离线时也不会每次启动都重试
     {
         let mut state = read_state(app);
         state.last_checked_at = Some(now_secs());
@@ -309,6 +306,17 @@ pub fn silent_check(app: &tauri::AppHandle) {
                     "update",
                     &format!("发现新版 pi-web {version}（内置 {}）", bundled.pi_web),
                 );
+                let already = read_state(&handle)
+                    .notified_piweb_version
+                    .as_deref()
+                    == Some(version.as_str());
+                if already && !headless() {
+                    crate::logging::line("update", "这个 pi-web 版本已经提醒过，本次不再弹窗");
+                    return;
+                }
+                let mut state = read_state(&handle);
+                state.notified_piweb_version = Some(version.clone());
+                write_state(&handle, &state);
                 let (message, can_copy) = build_message(&bundled, &Ok(version));
                 show_dialog(&handle, &message, can_copy);
             }
@@ -489,13 +497,8 @@ fn update_state_touch_app(app: &tauri::AppHandle) {
     write_state(app, &state);
 }
 
-/// 启动后静默检查应用更新（24h 一次，有更新才提示）。
+/// 启动后静默检查应用更新（**每次启动都查**，有更新才提示；不自动安装）。
 pub fn silent_app_check(app: &tauri::AppHandle) {
-    if let Some(last) = read_state(app).last_app_checked_at {
-        if now_secs().saturating_sub(last) < SILENT_INTERVAL_SECS {
-            return;
-        }
-    }
     update_state_touch_app(app);
     let handle = app.clone();
     std::thread::spawn(move || {
@@ -503,6 +506,18 @@ pub fn silent_app_check(app: &tauri::AppHandle) {
         match check_app_update_sync(&handle) {
             Ok(Some(update)) => {
                 crate::logging::line("update", &format!("应用有新版本 v{}", update.version));
+                // 同一版本只提醒一次：每次启动都查，但不用每次开机都弹同一个窗
+                let already = read_state(&handle)
+                    .notified_app_version
+                    .as_deref()
+                    == Some(update.version.as_str());
+                if already && !headless() {
+                    crate::logging::line("update", "这个版本已经提醒过，本次不再弹窗");
+                    return;
+                }
+                let mut state = read_state(&handle);
+                state.notified_app_version = Some(update.version.clone());
+                write_state(&handle, &state);
                 let accepted = if headless() {
                     true
                 } else {

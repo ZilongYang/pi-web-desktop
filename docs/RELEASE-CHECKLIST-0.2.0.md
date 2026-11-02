@@ -54,6 +54,15 @@
 - [x] 顺带修：「复制服务地址」从"只写日志"改成真正 pbcopy；帮助菜单加 GitHub 仓库入口
 - [x] 发布 v0.2.5（线上 latest.json 已更新）
 
+## 0.2.6（F1 + F2，内置 pi-web 0.14.2）
+
+- [x] **F1**：`silent_app_check` / `silent_check` 去掉 24h 节流 → 每次启动都检查；新增「同一版本只提醒一次」（`update-state.json` 记 `notified_*_version`）
+- [x] **F2**：App 菜单「关于 Pi Web Desktop」下面新增「检查更新…」，与 Pi Web 菜单入口共用 `manual_check_all`
+- [x] pi-web 有新版时的文案改为指向「菜单 → 检查更新…」热更新
+- [x] 内置 pi-web 0.14.1 → **0.14.2**（pi SDK 1.5.0）；`npm run smoke` 通过
+- [x] 实测：连续两次冷启动，两次都执行检查（日志有 `应用已是最新` 与 pi-web 检查结果）
+- [x] 发布 v0.2.6（含 L3 侧车包 0.14.2 + `piweb-sidecar.json`）
+
 ## 每次发版的固定动作
 
 ```bash

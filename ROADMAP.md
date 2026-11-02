@@ -8,7 +8,7 @@
 把 [pi-web](https://github.com/agegr/pi-web)（Next.js 服务端 + 浏览器 UI）包成原生桌面 App：**自带 Node 运行时**，双击即用，与 `pi` CLI / 浏览器版共享 `~/.pi/agent`。
 
 - 仓库：<https://github.com/ZilongYang/pi-web-desktop>（MIT）
-- 最新版本：**v0.2.5**（内置 pi-web 0.14.1 / pi SDK 1.4.0 / Node 22.23.4）
+- 最新版本：**v0.2.6**（内置 pi-web 0.14.2 / pi SDK 1.5.0 / Node 22.23.4）
 - 平台：macOS 14+ arm64（Windows 代码路径已写、未验证；Linux 未验证）
 
 ## 能力矩阵
@@ -20,7 +20,7 @@
 | 与 CLI/浏览器共享数据、同版本自动附着 | ✅ 已验证 | 版本不一致时弹窗让用户选 |
 | PATH 继承登录 shell（nvm/pnpm/mnemon 可用） | ✅ 已验证 | 缓存 7 天，`inherit_login_shell_path` 可关 |
 | 启动页 + 失败态（日志尾部/重试/打开日志） | ✅ 已验证 | |
-| L1 版本检测（npm registry） | ✅ 已验证 | 24h 节流 |
+| 启动即检查更新（应用 + pi-web） | ✅ 已验证 | 每次启动都查；同一版本只提醒一次 |
 | L2 应用自更新（Tauri updater + minisign） | ✅ 真机闭环 | 进度窗 + 重启确认（0.2.3 起） |
 | L3 pi-web 热更新（只换 pi-web，不动 Node） | 🟡 代码完成 + 演练通过 | 真实"有新版本可装"未走过（等上游发版） |
 | 开源发布流水线（ci / release workflow） | ✅ 绿 | macOS arm64；Windows job 未加 |
@@ -29,29 +29,25 @@
 
 ## 待办 Backlog
 
-### P0 — 用户明确要求（2026-11-03 记录，待开发）
+### P0 — 用户明确要求（2026-11-03 记录）
 
-#### F1. 每次启动都静默检查一次更新，有更新就提醒
+#### F1. 每次启动都静默检查一次更新，有更新就提醒 —— ✅ 已在 0.2.6 完成
 
 - **现状**：启动后 20s 会检查应用更新（`update::silent_app_check`），但有 **24 小时节流**（`update-state.json` 的 `lastAppCheckedAt`）；pi-web 的检查（`silent_check`）同样 24h 节流。所以同一天多次重启只会检查一次。
 - **目标**：**每次启动**都静默检查一次；发现新版直接提醒（弹「下载并安装 / 稍后」，不自动安装）。24h 节流只用于其他后台轮询（如果需要）。
-- **落点**：`src-tauri/src/update.rs`
-  - `silent_app_check()`：去掉 `last_app_checked_at` 的时间判断，保留"每个进程只跑一次"（现在就是一次）
-  - `silent_check()`（pi-web/L1）：同理去掉 24h 判断，或缩短为"每次启动一次"
-  - `update-state.json` 里的时间戳可保留用于"上次检查结果"展示
-- **注意**：离线/被墙时每次启动会多一次失败请求（已有静默容错，不弹窗）；下载仍只在用户点确认后才开始。
-- **验收**：连续两次冷启动（间隔 1 分钟），日志里两次都有 `[update] 应用已是最新` 或 `发现新版`；有新版时每次启动都会弹一次提醒。
+- **实现**（0.2.6）：
+  - `silent_app_check()` / `silent_check()` 去掉 24h 节流，每次启动都查；
+  - 新增「同一版本只提醒一次」：`update-state.json` 记 `notified_app_version` / `notified_piweb_version`，避免每次开机弹同一个窗；
+  - pi-web 有新版时的文案改为指向「菜单 → 检查更新…」热更新（而不是只建议重建）。
+- **验证**：连续两次冷启动，日志两次都有检查记录（实测：两次都输出 `应用已是最新` 与 pi-web 检查结果）。
 
-#### F2. 「检查更新…」菜单放到「关于」后面
+#### F2. 「检查更新…」菜单放到「关于」后面 —— ✅ 已在 0.2.6 完成
 
 - **现状**：检查更新只在「Pi Web」菜单里；macOS 的 App 菜单（Pi Web Desktop）里只有 关于/服务/隐藏/退出。
 - **目标**：App 菜单「关于 Pi Web Desktop」下面加一项「检查更新…」（macOS 惯例位置）；「Pi Web」菜单里的入口**保留**（两处都能进）。
-- **落点**：`src-tauri/src/menu.rs` 的 app 子菜单数组，在 `about` 之后插入
-  ```rust
-  &MenuItemBuilder::with_id("check_update", "检查更新…").build(app)?,
-  ```
-  复用现有 `"check_update" => crate::update::manual_check_all(app)` 事件处理。
-- **验收**：App 菜单第二项是「检查更新…」，点击行为与 Pi Web 菜单里的一致。
+- **实现**（0.2.6）：`src-tauri/src/menu.rs` 的 app 子菜单在 `about` 之后插入
+  `MenuItemBuilder::with_id("check_update", "检查更新…")`，复用现有 `manual_check_all`。
+- **状态**：App 菜单第二项即「检查更新…」；「Pi Web」菜单里也保留入口。
 
 ### P1 — 功能验收与平台
 
@@ -84,6 +80,7 @@
 
 | 版本 | 内容 |
 |---|---|
+| 0.2.6 | 启动即检查更新（同一版本只提醒一次）；「关于」下方加「检查更新…」；内置 pi-web 0.14.2 / pi SDK 1.5.0 |
 | 0.2.5 | 菜单全中文；新增「视图」菜单（放大 ⌘= / 缩小 ⌘- / 实际大小 ⌘0 / 全屏）；缩放记忆；复制服务地址进剪贴板；帮助菜单加 GitHub |
 | 0.2.4 | 验证用版本（与 0.2.3 同功能），用于真机验证更新流程 |
 | 0.2.3 | 更新体验重做：下载进度窗（实时 MB/%）+ 安装后询问重启；修进度累计 bug |

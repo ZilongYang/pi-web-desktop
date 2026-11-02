@@ -56,7 +56,7 @@ cargo build                 # 调试构建
 
 | 壳版本 | 内置 pi-web | 内置 Node |
 |---|---|---|
-| 0.1.0 | 0.13.0 | 22.23.4 |
+| 0.2.6 | 0.14.2 | 22.23.4 |
 
 版本只在 `sidecar.json` 里改一处：改完 `npm run sidecar` 再重建即可。升级 pi-web 后**必须**跑一次 `npm run smoke`。
 
@@ -129,7 +129,7 @@ cargo build                 # 调试构建
 细节：
 
 - 菜单「检查更新…」先查应用本身（L2），没有应用更新再查 pi-web（L3）。
-- 启动后 20s 静默检查应用更新，24h 一次；L1 的 npm 检查同样 24h 一次。
+- **每次启动都会静默检查**（应用更新 20s 后、pi-web 10s 后）；同一个版本只提醒一次，不会每次开机都弹窗。
 - L3 装到 `~/Library/Application Support/com.zilong.piweb.desktop/sidecar/`，**不改签名过的 `.app`**；包内版本更高时会自动忽略旧的热更新目录（升级 app 后不会"降级运行"）。
 - pi 的扩展/插件/skills 不需要壳参与：pi-web 的插件面板自己就能装/升级。
 - 开发/演练用环境变量：`PIWEB_UPDATE_HEADLESS=1`（不弹窗、自动确认）、`PIWEB_SIDECAR_MANIFEST_URL`（指向本地假 Release）、`PIWEB_UPDATE_CHECK_ON_STARTUP=1`（启动 3s 后自动跑一次检查）。

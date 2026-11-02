@@ -70,6 +70,7 @@
 
 ### P2 — 体验打磨
 
+- **F14. L3 清单改位置（重要）**：现在 L3 清单 `piweb-sidecar.json` 挂在"应用 Release"上，有两个坑：① CI 在 tag push 时会用 `--clobber` 重新上传资产，把手工替换的清单冲掉（0.2.5 就发生过）；② GitHub 的 `releases/latest/download/...` 有约 5 分钟的 CDN 缓存，替换资产后 App 可能仍拿到旧清单。方案：清单放进仓库（master 分支的 `sidecar/piweb-sidecar.json`，App 用 raw.githubusercontent 取），或放到独立的、只由侧车流水线更新的 release tag。
 - **F12. L3 下载也要有进度**：应用更新（L2）已有进度窗；pi-web 热更新下载 79MB 时只有日志，界面静默十几秒。做法：复用 `ui/update.html`，把进度事件也发给它。
 - **F13. 「更新 pi-web…」独立入口**：已加（`Pi Web` 菜单，代码在 0.2.7），避免"应用更新/热更新"混在一个入口里。
 

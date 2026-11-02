@@ -158,6 +158,12 @@ src-tauri/src/         # main（状态机/窗口/菜单/命令）、sidecar、pr
 docs/PLAN-2026-11-01.md# 方案原文（批准版）+ 事后补记
 ```
 
+## 文档
+
+- 方案与实施记录：[docs/PLAN-2026-11-01.md](docs/PLAN-2026-11-01.md)（初版壳）、[docs/PLAN-2026-11-02-L2L3.md](docs/PLAN-2026-11-02-L2L3.md)（更新机制）
+- 验收与回归：[docs/QA-2026-11-01.md](docs/QA-2026-11-01.md)
+- 发版清单：[docs/RELEASE-CHECKLIST-0.2.0.md](docs/RELEASE-CHECKLIST-0.2.0.md)
+
 ## License
 
 MIT，见 [LICENSE](LICENSE)。

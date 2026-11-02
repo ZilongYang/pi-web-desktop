@@ -182,6 +182,18 @@ fn from_root(root: &Path, node: PathBuf) -> Option<Sidecar> {
     })
 }
 
+/// 开发目录兜底（仅 debug 构建）。release 里必须返回 None：`env!("CARGO_MANIFEST_DIR")`
+/// 会把构建机的绝对路径嵌进二进制，等于把家目录公开出去（make-dist.sh 会断言这一点）。
+#[cfg(debug_assertions)]
+fn dev_sidecar_root() -> Option<PathBuf> {
+    Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("sidecar"))
+}
+
+#[cfg(not(debug_assertions))]
+fn dev_sidecar_root() -> Option<PathBuf> {
+    None
+}
+
 fn bundled_node(app: &tauri::AppHandle) -> Option<PathBuf> {
     if let Ok(resource_dir) = app.path().resource_dir() {
         let candidate = resource_dir.join("pi-web").join("runtime").join(node_bin_name());
@@ -189,13 +201,11 @@ fn bundled_node(app: &tauri::AppHandle) -> Option<PathBuf> {
             return Some(candidate);
         }
     }
-    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("sidecar")
-        .join("runtime")
-        .join(node_bin_name());
-    if dev.is_file() {
-        return Some(dev);
+    if let Some(dev_root) = dev_sidecar_root() {
+        let dev = dev_root.join("runtime").join(node_bin_name());
+        if dev.is_file() {
+            return Some(dev);
+        }
     }
     None
 }
@@ -216,8 +226,9 @@ pub fn resolve(app: &tauri::AppHandle) -> Result<Sidecar, String> {
         bundled_version = read_sidecar_version(&resource_dir.join("pi-web")).unwrap_or_default();
     }
     if bundled_version.is_empty() {
-        let dev_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("sidecar");
-        bundled_version = read_sidecar_version(&dev_root).unwrap_or_default();
+        if let Some(dev_root) = dev_sidecar_root() {
+            bundled_version = read_sidecar_version(&dev_root).unwrap_or_default();
+        }
     }
 
     if let Ok(local) = app.path().app_local_data_dir() {
@@ -266,16 +277,17 @@ pub fn resolve(app: &tauri::AppHandle) -> Result<Sidecar, String> {
         tried.push(root.display().to_string());
     }
 
-    let dev_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("sidecar");
-    let dev_node = dev_root.join("runtime").join(node_bin_name());
-    if let Some(sidecar) = from_root(&dev_root, dev_node) {
-        crate::logging::line(
-            "sidecar",
-            &format!("使用开发目录侧车 {}（pi-web {}）", dev_root.display(), sidecar.version),
-        );
-        return Ok(sidecar);
+    if let Some(dev_root) = dev_sidecar_root() {
+        let dev_node = dev_root.join("runtime").join(node_bin_name());
+        if let Some(sidecar) = from_root(&dev_root, dev_node) {
+            crate::logging::line(
+                "sidecar",
+                &format!("使用开发目录侧车 {}（pi-web {}）", dev_root.display(), sidecar.version),
+            );
+            return Ok(sidecar);
+        }
+        tried.push(dev_root.display().to_string());
     }
-    tried.push(dev_root.display().to_string());
 
     Err(format!(
         "找不到可用的侧车目录（已试：{}）。开发环境先跑 `npm run sidecar`。",

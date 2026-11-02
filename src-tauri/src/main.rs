@@ -166,6 +166,11 @@ fn url_allowed(allowed_port: &Arc<Mutex<Option<u16>>>, url: &Url) -> bool {
 
 /// 恢复上一次"没链接到底"的体验：直接问用户怎么办，而不是白屏。
 fn decide_on_mismatch(app: &tauri::AppHandle, existing: &discovery::ExistingInstance, ours: &str) -> bool {
+    // 自动化演练（headless）时不弹窗，默认「启动独立实例」
+    if std::env::var("PIWEB_UPDATE_HEADLESS").ok().as_deref() == Some("1") {
+        logging::line("app", "headless：版本不一致时不附着，直接起自带的实例");
+        return false;
+    }
     let message = format!(
         "检测到本机已在运行 pi-web v{}（{}），本应用内置的是 v{ours}。\n\n连接已有实例 = 与浏览器/命令行共享同一个服务；启动独立实例 = 用内置版本另起一个（可能与已有实例同时操作同一份会话）。",
         existing.version, existing.url
@@ -222,8 +227,13 @@ fn run_launch(app: tauri::AppHandle) {
     };
     let config = sidecar::Config::load(&app);
 
+    let skip_attach = SKIP_ATTACH_NEXT_LAUNCH.swap(false, Ordering::SeqCst);
+    if skip_attach {
+        logging::line("app", "本次启动强制自己起侧车（热更新验证），跳过附着");
+    }
+
     // 1) 附着同版本实例：避免两份服务同时写同一份会话文件
-    if config.attach_policy != "never" {
+    if !skip_attach && config.attach_policy != "never" {
         if let Some(existing) = discovery::find_matching(&sidecar.version) {
             status(&app, "attached", format!("已连接本机运行的 pi-web v{}（{}）", existing.version, existing.url));
             if let Ok(mut port) = state.allowed_port.lock() {
@@ -329,6 +339,10 @@ fn run_launch(app: tauri::AppHandle) {
 }
 
 static HEALTH_MONITOR_STARTED: AtomicBool = AtomicBool::new(false);
+
+/// 下一次启动强制自己起侧车（热更新验证用）：不要附着到外部实例，
+/// 否则"探活成功"可能只是外部那个实例在应答，误判成新版本可用。
+static SKIP_ATTACH_NEXT_LAUNCH: AtomicBool = AtomicBool::new(false);
 
 /// 运行期健康监控，全局只有一个。
 ///
@@ -457,9 +471,33 @@ pub(crate) fn stop_sidecar(app: &tauri::AppHandle) {
 pub fn restart_sidecar_now(app: &tauri::AppHandle) -> Result<(), String> {
     logging::line("app", "重启侧车");
     stop_sidecar(app);
+    // 立刻把状态置回 Starting：否则调用方（热更新/健康监控）可能读到上一轮的 Failed
+    if let Ok(mut mode) = app.state::<AppState>().mode.lock() {
+        *mode = Mode::Starting;
+    }
     let handle = app.clone();
     std::thread::spawn(move || run_launch(handle));
     Ok(())
+}
+
+/// 热更新验证用：强制下一次启动自己起侧车（不附着）。
+pub(crate) fn restart_sidecar_spawn_only(app: &tauri::AppHandle) -> Result<(), String> {
+    SKIP_ATTACH_NEXT_LAUNCH.store(true, Ordering::SeqCst);
+    restart_sidecar_now(app)
+}
+
+/// 侧车是不是已经明确失败（用于热更新快速判定，不用等满 60s）。
+pub(crate) fn sidecar_failed(app: &tauri::AppHandle) -> bool {
+    matches!(*app.state::<AppState>().mode.lock().unwrap(), Mode::Failed)
+}
+
+/// 当前是否由本应用自己托管着侧车（热更新验证"真的起来了"）。
+pub(crate) fn owns_running_sidecar(app: &tauri::AppHandle) -> bool {
+    app.state::<AppState>()
+        .sidecar
+        .lock()
+        .map(|guard| guard.is_some())
+        .unwrap_or(false)
 }
 
 /// 当前侧车端口（热更新探活用）。

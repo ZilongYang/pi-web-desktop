@@ -146,6 +146,13 @@ fn node_bin_name() -> &'static str {
     }
 }
 
+/// manifest.json 由 scripts/fetch-sidecar.mjs 生成；热更新的 overlay 也带一份。
+pub fn read_sidecar_version(dir: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(dir.join("manifest.json")).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
+    json.get("piWebVersion")?.as_str().map(|s| s.to_string())
+}
+
 /// 从"根目录 + node 路径"组装一个可用的侧车。
 /// 根目录里必须有 `app/node_modules/@agegr/pi-web/bin/pi-web.js`；
 /// 包内那份还额外有 `runtime/node`，运行时 overlay（L3）则复用包内的 node。
@@ -202,20 +209,44 @@ fn bundled_node(app: &tauri::AppHandle) -> Option<PathBuf> {
 pub fn resolve(app: &tauri::AppHandle) -> Result<Sidecar, String> {
     let mut tried: Vec<String> = Vec::new();
 
+    // 先算出包内那份的版本，overlay 只有严格更新时才用（否则 app 升级到更高版本后
+    // 还会被旧 overlay 顶住，等于"降级运行"）。
+    let mut bundled_version = String::new();
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        bundled_version = read_sidecar_version(&resource_dir.join("pi-web")).unwrap_or_default();
+    }
+    if bundled_version.is_empty() {
+        let dev_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("sidecar");
+        bundled_version = read_sidecar_version(&dev_root).unwrap_or_default();
+    }
+
     if let Ok(local) = app.path().app_local_data_dir() {
         let root = local.join("sidecar");
         if root.join("app").is_dir() {
             if let Some(node) = bundled_node(app) {
                 if let Some(sidecar) = from_root(&root, node) {
+                    let is_newer = crate::update::compare_versions_public(
+                        &sidecar.version,
+                        &bundled_version,
+                    ) == std::cmp::Ordering::Greater;
+                    if is_newer {
+                        crate::logging::line(
+                            "sidecar",
+                            &format!(
+                                "使用热更新侧车 {}（pi-web {}）",
+                                root.display(),
+                                sidecar.version
+                            ),
+                        );
+                        return Ok(sidecar);
+                    }
                     crate::logging::line(
                         "sidecar",
                         &format!(
-                            "使用热更新侧车 {}（pi-web {}）",
-                            root.display(),
-                            sidecar.version
+                            "忽略过期的热更新侧车（{} <= 包内 {}），继续用包内的",
+                            sidecar.version, bundled_version
                         ),
                     );
-                    return Ok(sidecar);
                 }
             }
         }

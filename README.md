@@ -96,25 +96,23 @@ cargo build                 # 调试构建
 - **首次启动会重写 `Resources/pi-web/app/node_modules/@agegr/pi-web/.next/prerender-manifest.json`**（pi-web launcher 轮换 preview 密钥的安全设计）。之后 `codesign --deep --strict` 会因这一个数据文件报签名不符；签名校验请在本机首次运行**之前**做，或改用 Developer ID + 重新签名的发布流程。
 - **附着模式**：连的是别人启动的 server，退出时不会杀它；桌面窗口与浏览器窗口的 localStorage 互不共享（WKWebView 的数据目录按 app 隔离）。
 
-## 更新（L1：只检测，不自动升级）
+## 更新
 
-壳会替你盯着上游，但**不会自动下载或替换**——pi-web / Node 都打包在已签名的 `.app` 里，替换必须走「换整个 app」（Tauri updater，需要发布源 + 签名）或「运行时侧车热更新」（需要侧车包 + 校验 + 原子切换），这两层还没做。
+三层机制，都是「菜单 → 检查更新…」的一部分：
 
-现在做的：
+| 层 | 更新什么 | 怎么做 | 失败时 |
+|---|---|---|---|
+| **L1 检测** | 版本认知 | 24h 一次查 npm registry，落后就提示（文案含可复制的重建命令） | 静默 |
+| **L2 应用自更新** | 整个 `.app`（含内置 pi-web / pi SDK / Node） | Tauri updater：下载 `.app.tar.gz` → 校验 minisign 签名 → 替换 → 重启 | 报错并保持旧版本 |
+| **L3 pi-web 热更新** | **只换 pi-web**，Node 不动 | 从 GitHub Release 下载侧车包（≈78MB）→ 校验 SHA256 → 解压 → 原子切换 → 重启侧车 | 自动回滚到上一版本 |
 
-- 启动后约 10s 静默检查一次 npm registry 的 `@agegr/pi-web/latest`，**24h 最多一次**（时间戳在 `update-state.json`）；有新版才弹提示，没新版/离线都不打扰。
-- 菜单 **Pi Web → 检查更新…** 随时手动查，总是弹结果（含内置版本明细）。
-- 提示里给一键**复制升级命令**：
+细节：
 
-```bash
-cd ~/zWork/ai/pi-web-desktop && npm run sidecar && npm run build
-```
-
-- pi SDK 由 pi-web 精确锁定（`@earendil-works/*`），它跟着 pi-web 一起升，不要单独升。
-- pi 的扩展/插件/skills 是运行时装的，**不需要壳参与**：pi-web 的插件面板就能装/查更新（侧车里 `npm`/`npx` 可用）。
-- pi-web 自带的更新提示已被 `PI_WEB_SKIP_VERSION_CHECK=1` 关闭（它给的指引是 `npm install -g`，对内置副本无效），提示统一由壳负责。
-
-开发/验证用的环境变量（仅测试用）：`PIWEB_UPDATE_HEADLESS=1`（不弹窗，只写日志）、`PIWEB_UPDATE_FAKE_LATEST=0.14.0`（假装 registry 上有新版）。
+- 菜单「检查更新…」先查应用本身（L2），没有应用更新再查 pi-web（L3）。
+- 启动后 20s 静默检查应用更新，24h 一次；L1 的 npm 检查同样 24h 一次。
+- L3 装到 `~/Library/Application Support/com.zilong.piweb.desktop/sidecar/`，**不改签名过的 `.app`**；包内版本更高时会自动忽略旧的热更新目录（升级 app 后不会"降级运行"）。
+- pi 的扩展/插件/skills 不需要壳参与：pi-web 的插件面板自己就能装/升级。
+- 开发/演练用环境变量：`PIWEB_UPDATE_HEADLESS=1`（不弹窗、自动确认）、`PIWEB_SIDECAR_MANIFEST_URL`（指向本地假 Release）、`PIWEB_UPDATE_CHECK_ON_STARTUP=1`（启动 3s 后自动跑一次检查）。
 
 ## 签名与发布
 
@@ -124,7 +122,18 @@ cd ~/zWork/ai/pi-web-desktop && npm run sidecar && npm run build
 | 发布产物（`dist/`） | **ad-hoc**（`codesign -s -`） | 对下载者来说两者等价（都过不了 Gatekeeper 的 Developer ID 要求），ad-hoc 不依赖任何证书，构建可复现 |
 | 自动更新包 | Tauri updater 密钥（minisign） | 与 Apple 签名无关；私钥只存在 GitHub Secrets，公钥在 `tauri.conf.json` |
 
-发布：`npm run dist` 产出 `dist/` 全套（dmg / zip / 侧车包 / SHA256SUMS），然后 `git tag v0.2.0 && git push origin v0.2.0`，CI 会构建并发布 Release。
+updater 密钥（minisign）与 Apple 签名无关：
+
+```bash
+# 一次性生成（私钥不进 git）
+./node_modules/.bin/tauri signer generate -w .secrets/updater.key -p "<password>"
+# 公钥写进 src-tauri/tauri.conf.json → plugins.updater.pubkey
+# 私钥与密码加到 GitHub Secrets：TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+```
+
+发布：改 `src-tauri/tauri.conf.json` 与 `package.json`/`Cargo.toml` 的版本 → 提交 → `git tag v<ver> && git push origin v<ver>`，CI（`.github/workflows/release.yml`）会构建并发布 Release（dmg / zip / updater 包 + `latest.json` / L3 侧车包 + `piweb-sidecar.json` / SHA256SUMS）。
+
+本地想先验证打包：`npm run dist`（在普通终端里跑，`diskutil` 需要挂载卷）。
 
 ## 构建环境的坑（已内置规避）
 

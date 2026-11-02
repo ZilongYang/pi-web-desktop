@@ -203,25 +203,33 @@ fn validate_unpacked(unpacked: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// 原子切换：`sidecar/app` → `sidecar/.prev`，`unpacked/app` → `sidecar/app`。
+/// 原子切换：`app/` + `manifest.json` 一起备份到 `.prev/`，再放进新的。
+/// 版本号必须和内容一起换，否则回滚后 `resolve` 还会报新版本号（踩过）。
 fn swap_in(app: &tauri::AppHandle, unpacked: &Path) -> Result<PathBuf, String> {
     let root = overlay_root(app).ok_or("拿不到 app local data 目录")?;
     std::fs::create_dir_all(&root).map_err(|error| format!("创建 overlay 目录失败：{error}"))?;
     let current = root.join("app");
+    let current_manifest = root.join("manifest.json");
     let previous = root.join(".prev");
     let _ = std::fs::remove_dir_all(&previous);
+    std::fs::create_dir_all(&previous).map_err(|error| format!("创建备份目录失败：{error}"))?;
 
     if current.is_dir() {
-        std::fs::rename(&current, &previous)
+        std::fs::rename(&current, previous.join("app"))
             .map_err(|error| format!("备份旧版本失败（可能有文件占用）：{error}"))?;
     }
+    if current_manifest.is_file() {
+        let _ = std::fs::rename(&current_manifest, previous.join("manifest.json"));
+    }
+
     if let Err(error) = std::fs::rename(unpacked.join("app"), &current) {
         // 尽量把旧的换回去，避免留下半成品
-        let _ = std::fs::rename(&previous, &current);
+        let _ = std::fs::rename(previous.join("app"), &current);
+        let _ = std::fs::rename(previous.join("manifest.json"), &current_manifest);
         return Err(format!("切换新版本失败：{error}"));
     }
     if let Ok(manifest) = std::fs::read(unpacked.join("manifest.json")) {
-        let _ = std::fs::write(root.join("manifest.json"), manifest);
+        let _ = std::fs::write(&current_manifest, manifest);
     }
     crate::logging::line("hotupdate", &format!("已切换到新版本（备份在 {}）", previous.display()));
     Ok(previous)
@@ -230,13 +238,20 @@ fn swap_in(app: &tauri::AppHandle, unpacked: &Path) -> Result<PathBuf, String> {
 fn rollback(app: &tauri::AppHandle, previous: &Path) -> Result<(), String> {
     let root = overlay_root(app).ok_or("拿不到 overlay 目录")?;
     let current = root.join("app");
+    let current_manifest = root.join("manifest.json");
     let broken = root.join("app.broken");
     let _ = std::fs::remove_dir_all(&broken);
     if current.exists() {
         let _ = std::fs::rename(&current, &broken);
     }
-    if previous.exists() {
-        std::fs::rename(previous, &current).map_err(|error| format!("回滚失败：{error}"))?;
+    if previous.join("app").exists() {
+        std::fs::rename(previous.join("app"), &current).map_err(|error| format!("回滚失败：{error}"))?;
+        // 版本号也要跟着回滚
+        if previous.join("manifest.json").is_file() {
+            let _ = std::fs::rename(previous.join("manifest.json"), &current_manifest);
+        } else {
+            let _ = std::fs::remove_file(&current_manifest);
+        }
         crate::logging::line("hotupdate", "已回滚到旧版本");
     }
     let _ = std::fs::remove_dir_all(&broken);
@@ -257,14 +272,17 @@ pub fn recover_on_startup(app: &tauri::AppHandle) {
     let current_ok = current
         .join("node_modules/@agegr/pi-web/bin/pi-web.js")
         .is_file();
-    if previous.is_dir() && !current_ok {
+    if previous.join("app").is_dir() && !current_ok {
         crate::logging::line("hotupdate", "检测到不完整的 overlay，恢复 .prev");
         let broken = root.join("app.broken");
         let _ = std::fs::remove_dir_all(&broken);
         if current.exists() {
             let _ = std::fs::rename(&current, &broken);
         }
-        let _ = std::fs::rename(&previous, &current);
+        let _ = std::fs::rename(previous.join("app"), &current);
+        if previous.join("manifest.json").is_file() {
+            let _ = std::fs::rename(previous.join("manifest.json"), root.join("manifest.json"));
+        }
         let _ = std::fs::remove_dir_all(&broken);
     }
 }
@@ -272,9 +290,18 @@ pub fn recover_on_startup(app: &tauri::AppHandle) {
 fn wait_sidecar_ready(app: &tauri::AppHandle, timeout: Duration) -> bool {
     let started = Instant::now();
     while started.elapsed() < timeout {
+        // 给新一次启动一点时间把状态从 Failed 翻成 Starting，再谈"快速失败"
+        if started.elapsed() > Duration::from_secs(2) && crate::sidecar_failed(app) {
+            crate::logging::line("hotupdate", "侧车明确启动失败，提前判定");
+            return false;
+        }
         let port = crate::current_sidecar_port(app);
         if let Some(port) = port {
-            if crate::probe::http_answers(port, Duration::from_millis(600)) {
+            // 必须同时满足：是我们自己起的进程 + 端口有 HTTP 应答。
+            // 只探端口会在"附着到外部实例"时误判成功。
+            if crate::owns_running_sidecar(app)
+                && crate::probe::http_answers(port, Duration::from_millis(600))
+            {
                 return true;
             }
         }
@@ -381,7 +408,7 @@ fn install(app: &tauri::AppHandle, asset: &Asset) -> Result<(), String> {
     // 停服务 → 换目录 → 重启 → 探活
     crate::stop_sidecar_for_update(app);
     let previous = swap_in(app, &unpacked)?;
-    crate::restart_sidecar_now(app)?;
+    crate::restart_sidecar_spawn_only(app)?;
     if wait_sidecar_ready(app, READY_TIMEOUT) {
         let _ = std::fs::remove_dir_all(&previous);
         cleanup_staging(app);
@@ -393,7 +420,7 @@ fn install(app: &tauri::AppHandle, asset: &Asset) -> Result<(), String> {
     crate::logging::line("hotupdate", "新版本侧车未就绪，开始回滚");
     crate::stop_sidecar_for_update(app);
     rollback(app, &previous)?;
-    crate::restart_sidecar_now(app)?;
+    crate::restart_sidecar_spawn_only(app)?;
     let recovered = wait_sidecar_ready(app, READY_TIMEOUT);
     cleanup_staging(app);
     if recovered {

@@ -40,7 +40,7 @@ pub fn on_event(app: &AppHandle, event: MenuEvent) {
                 crate::logging::line("menu", &format!("重启失败：{error}"));
             }
         }
-        "check_update" => crate::update::manual_check(app),
+        "check_update" => crate::update::manual_check_all(app),
         "open_browser" => {
             if let Some(url) = crate::current_url(app) {
                 use tauri_plugin_opener::OpenerExt;

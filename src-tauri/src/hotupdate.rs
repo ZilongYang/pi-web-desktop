@@ -135,17 +135,59 @@ fn human(bytes: u64) -> String {
     }
 }
 
-fn download_asset(app: &tauri::AppHandle, asset: &Asset) -> Result<PathBuf, String> {
+fn download_asset(
+    app: &tauri::AppHandle,
+    asset: &Asset,
+    version: &str,
+) -> Result<PathBuf, String> {
     let staging = staging_dir(app).ok_or("拿不到 app local data 目录")?;
     std::fs::create_dir_all(&staging).map_err(|error| format!("创建 staging 失败：{error}"))?;
     let target = staging.join("sidecar.tar.gz");
     let _ = std::fs::remove_file(&target);
-    let target_text = target.to_string_lossy().to_string();
     crate::logging::line("hotupdate", &format!("下载 {}", asset.url));
-    curl(
-        &["-o", &target_text, &asset.url],
-        proxy_from_config(app).as_deref(),
-    )?;
+
+    // 用 curl 下到文件，同时轮询文件大小播报进度（updater 那边的回调语义踩过坑，
+    // 这里直接看文件增长，简单可靠）
+    let mut command = Command::new("curl");
+    command
+        .args(["-s", "-L", "--fail", "--max-time", "900", "-o"])
+        .arg(&target)
+        .arg(&asset.url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(proxy) = proxy_from_config(app).filter(|value| !value.trim().is_empty()) {
+        command.args(["--proxy", &proxy]);
+    }
+    let mut child = command.spawn().map_err(|error| format!("无法执行 curl：{error}"))?;
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    return Err(format!("下载失败（curl 退出码 {:?}）", status.code()));
+                }
+                break;
+            }
+            Ok(None) => {
+                let downloaded = std::fs::metadata(&target).map(|meta| meta.len()).unwrap_or(0);
+                crate::progress::emit(
+                    app,
+                    "downloading",
+                    serde_json::json!({
+                        "title": "正在下载 pi-web",
+                        "label": format!("pi-web v{version}"),
+                        "downloaded": downloaded,
+                        "total": asset.bytes,
+                        "hint": "下载完成后会自动切换并重启本地服务（失败会回滚）。",
+                    }),
+                );
+                std::thread::sleep(Duration::from_millis(250));
+            }
+            Err(error) => return Err(format!("等待 curl 失败：{error}")),
+        }
+    }
+
     let size = std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
     crate::logging::line("hotupdate", &format!("下载完成 {}", human(size)));
     if let Some(expected) = asset.bytes {
@@ -385,7 +427,7 @@ pub fn manual_check(app: &tauri::AppHandle) {
             return;
         }
 
-        match install(&handle, &asset) {
+        match install(&handle, &asset, &manifest.pi_web_version) {
             Ok(()) => show_dialog(
                 &handle,
                 &format!("已更新到 pi-web {}，服务已重启。", manifest.pi_web_version),
@@ -399,9 +441,39 @@ pub fn manual_check(app: &tauri::AppHandle) {
     });
 }
 
-fn install(app: &tauri::AppHandle, asset: &Asset) -> Result<(), String> {
+fn install(app: &tauri::AppHandle, asset: &Asset, version: &str) -> Result<(), String> {
     cleanup_staging(app);
-    let archive = download_asset(app, asset)?;
+    crate::progress::open(app);
+    crate::progress::emit(
+        app,
+        "downloading",
+        serde_json::json!({
+            "title": "正在下载 pi-web",
+            "label": format!("pi-web v{version}"),
+            "downloaded": 0,
+            "total": asset.bytes,
+            "hint": "下载完成后会自动切换并重启本地服务（失败会回滚）。",
+        }),
+    );
+
+    let archive = match download_asset(app, asset, version) {
+        Ok(path) => path,
+        Err(error) => {
+            crate::progress::emit(
+                app,
+                "failed",
+                serde_json::json!({ "title": "pi-web 下载失败", "message": error.clone() }),
+            );
+            std::thread::sleep(Duration::from_millis(700));
+            crate::progress::close(app);
+            return Err(error);
+        }
+    };
+    crate::progress::emit(
+        app,
+        "installing",
+        serde_json::json!({ "title": "正在安装 pi-web", "hint": "校验、解压、切换目录…" }),
+    );
     let unpacked = extract_archive(app, &archive)?;
     validate_unpacked(&unpacked)?;
 
@@ -413,6 +485,16 @@ fn install(app: &tauri::AppHandle, asset: &Asset) -> Result<(), String> {
         let _ = std::fs::remove_dir_all(&previous);
         cleanup_staging(app);
         crate::logging::line("hotupdate", "新版本侧车启动正常，已删除旧版本备份");
+        crate::progress::emit(
+            app,
+            "ready",
+            serde_json::json!({
+                "title": "pi-web 已更新",
+                "hint": format!("本地服务已重启（pi-web v{version}）。"),
+            }),
+        );
+        std::thread::sleep(Duration::from_millis(800));
+        crate::progress::close(app);
         return Ok(());
     }
 
@@ -423,6 +505,16 @@ fn install(app: &tauri::AppHandle, asset: &Asset) -> Result<(), String> {
     crate::restart_sidecar_spawn_only(app)?;
     let recovered = wait_sidecar_ready(app, READY_TIMEOUT);
     cleanup_staging(app);
+    crate::progress::emit(
+        app,
+        "failed",
+        serde_json::json!({
+            "title": "pi-web 更新失败，已回滚",
+            "message": if recovered { "新版本起不来，已回滚到旧版本。" } else { "新版本起不来，回滚后旧版本也没起来，请查看日志。" },
+        }),
+    );
+    std::thread::sleep(Duration::from_millis(900));
+    crate::progress::close(app);
     if recovered {
         Err("新版本启动失败，已回滚并恢复旧版本".to_string())
     } else {

@@ -124,11 +124,11 @@ cargo build                 # 调试构建
 |---|---|---|---|
 | **L1 检测** | 版本认知 | 24h 一次查 npm registry，落后就提示（文案含可复制的重建命令） | 静默 |
 | **L2 应用自更新** | 整个 `.app`（含内置 pi-web / pi SDK / Node） | Tauri updater：下载 `.app.tar.gz` → 校验 minisign 签名 → 替换 → 重启 | 报错并保持旧版本 |
-| **L3 pi-web 热更新** | **只换 pi-web**，Node 不动 | 从 GitHub Release 下载侧车包（≈78MB）→ 校验 SHA256 → 解压 → 原子切换 → 重启侧车 | 自动回滚到上一版本 |
+| **L3 pi-web 热更新** | **只换 pi-web**，Node 不动 | 从 GitHub Release 下载侧车包（≈80MB）→ **进度窗** → 校验 SHA256 → 解压 → 原子切换 → 重启侧车 | 自动回滚到上一版本（也有提示） |
 
 细节：
 
-- 菜单「检查更新…」先查应用本身（L2），没有应用更新再查 pi-web（L3）。
+- 菜单「检查更新…」先查应用本身（L2），没有应用更新（或你选择跳过）再查 pi-web（L3）；「Pi Web → 更新 pi-web…」可直达 L3。
 - **每次启动都会静默检查**（应用更新 20s 后、pi-web 10s 后）；同一个版本只提醒一次，不会每次开机都弹窗。
 - L3 装到 `~/Library/Application Support/com.zilong.piweb.desktop/sidecar/`，**不改签名过的 `.app`**；包内版本更高时会自动忽略旧的热更新目录（升级 app 后不会"降级运行"）。
 - pi 的扩展/插件/skills 不需要壳参与：pi-web 的插件面板自己就能装/升级。

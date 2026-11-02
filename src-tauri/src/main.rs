@@ -13,6 +13,7 @@ mod hotupdate;
 mod logging;
 mod menu;
 mod probe;
+mod progress;
 mod sidecar;
 mod update;
 mod zoom;
@@ -590,7 +591,7 @@ fn main() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             get_status,
-            update::get_update_progress,
+            progress::get_update_progress,
             restart_sidecar,
             quit_app,
             open_logs,

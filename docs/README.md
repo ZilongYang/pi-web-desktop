@@ -16,7 +16,8 @@
 |---|---|
 | [screenshot-attach-mode.png](screenshot-attach-mode.png) | 附着到本机已在运行的 pi-web（30141） |
 | [screenshot-menu-chinese.png](screenshot-menu-chinese.png) | 全中文菜单栏（0.2.5） |
-| [screenshot-update-progress.png](screenshot-update-progress.png) | 应用更新下载进度窗（0.2.3 起） |
+| [screenshot-update-progress.png](screenshot-update-progress.png) | 应用更新（L2）下载进度窗（0.2.3 起） |
+| [screenshot-l3-progress.png](screenshot-l3-progress.png) | pi-web 热更新（L3）安装阶段进度窗（0.2.7 起） |
 | [screenshot-error-state.png](screenshot-error-state.png) | 启动失败态（原生对话框 + 日志尾部 + 重试） |
 
 ## 写文档的约定

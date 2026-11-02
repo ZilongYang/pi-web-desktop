@@ -60,8 +60,11 @@ ok "壳 $VERSION / pi-web $PIWEB_VERSION / node $NODE_VERSION"
 
 APP="$BUNDLE_DIR/macos/Pi Web Desktop.app"
 if [ ! -d "$APP" ]; then
-  note "构建 .app（ad-hoc 签名）"
-  ( cd "$REPO_ROOT" && ./node_modules/.bin/tauri build --bundles app ) || fail "tauri build 失败"
+  note "构建 .app（ad-hoc 整包签名）"
+  # 关键：APPLE_SIGNING_IDENTITY="-" 让 tauri 用 ad-hoc 身份把整个 bundle（含嵌套二进制、
+  # 资源封印）完整签名。不设的话 Tauri 只会留下 linker-signed 的主二进制，资源封印缺失，
+  # 下载到本机后 Gatekeeper 会报「已损坏，无法打开」。
+  ( cd "$REPO_ROOT" && APPLE_SIGNING_IDENTITY="-" ./node_modules/.bin/tauri build --bundles app )     || fail "tauri build 失败"
 fi
 ok "产物：$APP"
 
@@ -69,6 +72,12 @@ note "校验产物"
 signature=$(codesign -dv --verbose=2 "$APP" 2>&1 | sed -n 's/^Signature=//p')
 [ "$signature" = "adhoc" ] || fail "签名是「$signature」，应为 adhoc（发布产物不要用本机证书）"
 ok "签名 adhoc"
+
+# 只有 linker-signed 主二进制、没有资源封印的 bundle 会让下载者看到「已损坏，无法打开」，
+# 必须严格校验整包（这是踩过的坑，别省）。
+codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | grep -q "satisfies its Designated Requirement" \
+  || { codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | tail -3; fail "整包签名封印不完整（Gatekeeper 会报「已损坏」）"; }
+ok "整包签名封印完整（--verify --deep --strict）"
 
 built_arch=$(lipo -archs "$APP/Contents/MacOS/pi-web-desktop")
 [ "$built_arch" = "arm64" ] || fail "架构是 $built_arch，应为 arm64"

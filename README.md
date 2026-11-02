@@ -4,6 +4,17 @@
 
 和命令行 `pi`、浏览器版 pi-web 共享同一份 `~/.pi/agent`（会话、模型、skills、信任设置）。
 
+## 下载 / 安装（macOS）
+
+从 [Releases](https://github.com/ZilongYang/pi-web-desktop/releases/latest) 下载 `Pi-Web-Desktop-aarch64.dmg`（或 `.zip`），拖进「应用程序」。
+
+**首次打开需要放行**：本项目用 **ad-hoc 签名**（和 zWGestures 的做法一致），没有 Apple Developer ID 证书、也没做公证，所以 Gatekeeper 会拦一次。两种放行方式任选：
+
+- 右键点 App → **打开** → 再点「打开」；
+- 或终端里执行：`xattr -dr com.apple.quarantine "/Applications/Pi Web Desktop.app"`
+
+为什么不用 Developer ID：申请、年费、公证流程都只为消掉这一次点击；ad-hoc 不需要任何证书，任何人 clone 下来都能复现出同样的包。取舍写在 `scripts/make-dist.sh` 头部。
+
 ## 它是怎么跑的
 
 ```
@@ -105,6 +116,16 @@ cd ~/zWork/ai/pi-web-desktop && npm run sidecar && npm run build
 
 开发/验证用的环境变量（仅测试用）：`PIWEB_UPDATE_HEADLESS=1`（不弹窗，只写日志）、`PIWEB_UPDATE_FAKE_LATEST=0.14.0`（假装 registry 上有新版）。
 
+## 签名与发布
+
+| 场景 | 签名 | 说明 |
+|---|---|---|
+| 日常构建（自己用） | 本机自签名证书 | `npm run signing-cert` 建一把固定证书（独立钥匙串），然后 `APPLE_SIGNING_IDENTITY="Pi Web Desktop Local Signing" npm run build`。好处是 App 身份稳定，TCC/授权在重建之间不会被重置 |
+| 发布产物（`dist/`） | **ad-hoc**（`codesign -s -`） | 对下载者来说两者等价（都过不了 Gatekeeper 的 Developer ID 要求），ad-hoc 不依赖任何证书，构建可复现 |
+| 自动更新包 | Tauri updater 密钥（minisign） | 与 Apple 签名无关；私钥只存在 GitHub Secrets，公钥在 `tauri.conf.json` |
+
+发布：`npm run dist` 产出 `dist/` 全套（dmg / zip / 侧车包 / SHA256SUMS），然后 `git tag v0.2.0 && git push origin v0.2.0`，CI 会构建并发布 Release。
+
 ## 构建环境的坑（已内置规避）
 
 - **macOS 26/27 + Rust < 1.99**：cargo 的 release 默认 strip 会作用到 proc-macro，strip 后的 dylib 被新 dyld 拒绝（`mis-aligned LINKEDIT string pool`，表现为 `can't find crate for xxx_derive`）。`src-tauri/Cargo.toml` 已加 `[profile.release.build-override] strip = false` 规避；升到 Rust ≥ 1.99 后可删。
@@ -127,3 +148,7 @@ ui/index.html          # 本地 splash 页（唯一能用 Tauri IPC 的页面）
 src-tauri/src/         # main（状态机/窗口/菜单/命令）、sidecar、probe、discovery、logging
 docs/PLAN-2026-11-01.md# 方案原文（批准版）+ 事后补记
 ```
+
+## License
+
+MIT，见 [LICENSE](LICENSE)。

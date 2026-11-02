@@ -13,6 +13,7 @@
  *   node scripts/fetch-sidecar.mjs --force         # 强制重装
  *   node scripts/fetch-sidecar.mjs --target darwin-arm64
  *   node scripts/fetch-sidecar.mjs --no-prune      # 不裁剪（排查用）
+ *   node scripts/fetch-sidecar.mjs --no-patch      # 不打「自定义消息默认折叠」补丁
  */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -21,6 +22,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pruneSidecar } from "./prune-sidecar.mjs";
+import { patchPiWebCollapse } from "./patch-pi-web-collapse.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SIDECAR = path.join(ROOT, "sidecar");
@@ -111,8 +113,36 @@ const uptodate =
   fs.existsSync(path.join(RUNTIME_DIR, process.platform === "win32" ? "node.exe" : "node"));
 
 if (has("--if-missing") && uptodate && !has("--force")) {
+  // 已装好也可能缺补丁（例如补丁脚本是后加的），先兜底对齐。
+  if (fs.existsSync(path.join(APP_DIR, "node_modules", "@agegr", "pi-web", ".next"))) {
+    applyCollapsePatch("跳过前校验");
+  }
   log(`已就绪，跳过：pi-web ${pins.piWebVersion} / node ${pins.nodeVersion} / ${target}`);
   process.exit(0);
+}
+
+/**
+ * pi-web 渲染 extension 注入的 custom message 时默认展开，且无设置项。
+ * mnemon 每轮都会注入一大段指令，展开会刷屏 —— 这里把它改成默认折叠。
+ * 见 scripts/patch-pi-web-collapse.mjs。
+ */
+function applyCollapsePatch(phase) {
+  if (has("--no-patch")) {
+    log(`${phase}：--no-patch，跳过「自定义消息默认折叠」补丁`);
+    return;
+  }
+  try {
+    const result = patchPiWebCollapse({ appDir: APP_DIR });
+    if (result.patched) {
+      log(`${phase}：折叠补丁已应用 -> ${result.chunk}（${result.refsUpdated} 个引用）`);
+    } else {
+      log(`${phase}：折叠补丁已在位（${result.chunk}）`);
+    }
+  } catch (error) {
+    console.error(`[patch-collapse] ${phase}失败：${error.message}`);
+    console.error("  修复 patch-pi-web-collapse.mjs 后重跑；或用 --no-patch 跳过（跳过时 UI 会保持默认展开）。");
+    process.exit(1);
+  }
 }
 
 // ---- 1. npm 装 pi-web ------------------------------------------------------
@@ -205,6 +235,9 @@ if (!has("--no-prune")) {
 } else {
   before = dirSize(SIDECAR);
 }
+
+// ---- 3.5 打「自定义消息默认折叠」补丁 --------------------------------------
+applyCollapsePatch("安装后");
 
 // ---- 4. manifest ----------------------------------------------------------
 const nodeBin = path.join(RUNTIME_DIR, nodeBinName);

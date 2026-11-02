@@ -65,6 +65,13 @@ pub struct Config {
     /// 交互式 shell 的 rc 里才会写进 PATH，所以这里跑一次 `zsh -lic` 取回来。
     #[serde(default = "default_true")]
     pub inherit_login_shell_path: bool,
+    /// 页面缩放档位（1.0 = 100%），由菜单「视图」维护
+    #[serde(default = "default_zoom")]
+    pub zoom: f64,
+}
+
+fn default_zoom() -> f64 {
+    1.0
 }
 
 fn default_true() -> bool {
@@ -87,6 +94,7 @@ impl Default for Config {
             extra_env: HashMap::new(),
             pi_coding_agent_dir: None,
             inherit_login_shell_path: true,
+            zoom: 1.0,
         }
     }
 }

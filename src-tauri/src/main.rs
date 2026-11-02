@@ -15,6 +15,7 @@ mod menu;
 mod probe;
 mod sidecar;
 mod update;
+mod zoom;
 
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -667,6 +668,8 @@ fn main() {
                 .build()?;
             let _ = window.show();
 
+            // 恢复上次的页面缩放（菜单「视图 → 放大/缩小/实际大小」改的那个）
+            zoom::restore(&handle);
             start_health_monitor(handle.clone());
             // 上次热更新如果崩在半路，先把 overlay 恢复好再启动
             hotupdate::recover_on_startup(&handle);

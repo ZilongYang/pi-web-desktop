@@ -205,6 +205,11 @@ fn build_message(bundled: &BundledVersions, latest: &Result<String, String>) -> 
     }
 }
 
+/// 供菜单「复制服务地址」复用（原来只写日志）。
+pub fn copy_to_clipboard_public(text: &str) -> Result<(), String> {
+    copy_to_clipboard(text)
+}
+
 fn copy_to_clipboard(text: &str) -> Result<(), String> {
     let (program, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
         ("pbcopy", &[])

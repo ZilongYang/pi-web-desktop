@@ -84,6 +84,22 @@
 - **修复**（0.2.8）：`new_window_for()` 增加 `window_features(features)`，`on_new_window` 把 WebKit 传来的 `features` 透传。同一路径也覆盖「会话 ⋯ → 新标签页打开」。
 - **待用户复验**：0.2.8 上点「完整历史」与「新标签页打开会话」都应正常开新窗口。
 
+#### B2. 导出会话 HTML 报错 `Failed to patch exported HTML: sortChildren expected 1 match, found 0` —— 🟡 已定位，暂不修（2026-11-03 记录）
+
+- **现象**：会话「导出」打开的窗口里显示 JSON 错误（`?inline=1` 返回错误 JSON，不是 HTML）。
+- **注**：新窗口本身正常打开了 —— 说明 0.2.8 的崩溃修复生效（B1），这是服务端返回的内容问题。
+- **根因（上游版本组合不兼容，与本壳无关）**：
+  1. pi-web 0.14.2 的导出路由（`.next/server/app/api/sessions/[id]/export/route.js`）在生成 HTML 后做**字符串替换补丁**：把 `sortChildren` / `mapNodes` / `markActive` 三个递归函数替换成迭代版本（防深会话爆栈）。每个补丁要求**恰好 1 处匹配**，0 处就 `throw`。
+  2. 内置 **pi SDK 1.5.0** 的 `dist/core/export-html/template.js` 已经没有这三个函数（改成迭代遍历，`stack` 出现 19 次）。
+  3. 于是补丁匹配 0 处 → 抛出该错误。对照：用户 npx 那套 **pi-web 0.14.1 + SDK 1.4.0** 的 template.js 里三个函数都在（各 3 处），所以导出正常。
+- **影响**：仅「导出 HTML」；其它功能正常。
+- **候选方案（待定，按用户要求暂不发版）**：
+  - **A. 内置降级到 pi-web 0.14.1 / pi SDK 1.4.0**（导出恢复，最稳；丢 0.14.2 的更新）
+  - **B. 在 `fetch-sidecar` 阶段给 export 路由打补丁**：把"必须 1 处匹配"改成"0 处跳过、>1 才报错"（SDK 1.5.0 模板已是迭代实现，跳过即正确）。同类做法已有先例（`patch-pi-web-collapse.mjs`）
+  - **C. 等上游修**（pi-web 0.14.3 / SDK 1.5.1 大概率跟进），期间把内置钉在可用组合
+  - **D. 临时绕过**：命令行 `pi --export <session.jsonl> out.html`（不经过 pi-web 的补丁）
+- **跟进**：smoke 目前只查 `/` 与 `/api/sessions`；建议加一条「导出接口返回 HTML」的断言，这类上游不兼容就能在发版前发现（记为 F18）。
+
 ### P1 — 功能验收与平台
 
 #### F3. 功能手测清单（决定能不能日常用）

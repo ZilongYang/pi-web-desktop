@@ -121,6 +121,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .accelerator("CmdOrCtrl+Shift+R")
         .build(app)?;
     let check_update = MenuItemBuilder::with_id("check_update", "检查更新…").build(app)?;
+    let check_piweb = MenuItemBuilder::with_id("check_piweb_update", "更新 pi-web…").build(app)?;
     let open_browser = MenuItemBuilder::with_id("open_browser", "在浏览器中打开").build(app)?;
     let copy_url = MenuItemBuilder::with_id("copy_url", "复制服务地址").build(app)?;
     let open_logs = MenuItemBuilder::with_id("open_logs", "打开日志目录").build(app)?;
@@ -135,6 +136,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &reload,
             &restart,
             &check_update,
+            &check_piweb,
             &PredefinedMenuItem::separator(app)?,
             &open_browser,
             &copy_url,
@@ -166,6 +168,7 @@ pub fn on_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
             }
         }
         "check_update" => crate::update::manual_check_all(app),
+        "check_piweb_update" => crate::hotupdate::manual_check(app),
         "open_browser" => {
             if let Some(url) = crate::current_url(app) {
                 use tauri_plugin_opener::OpenerExt;

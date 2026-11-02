@@ -583,8 +583,10 @@ pub fn manual_check_all(app: &tauri::AppHandle) {
                         crate::logging::line("update", "继续检查 pi-web 更新");
                         crate::hotupdate::manual_check(&handle);
                     }
+                    return;
                 }
-                return;
+                // 用户跳过了应用更新 → 继续查 pi-web（这样 L3 可以单独验证/使用）
+                crate::logging::line("update", "用户跳过应用更新，继续检查 pi-web");
             }
             Ok(None) => crate::logging::line("update", "应用已是最新"),
             Err(error) => crate::logging::line(

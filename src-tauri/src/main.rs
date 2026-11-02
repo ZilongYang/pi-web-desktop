@@ -9,6 +9,7 @@
 //! 原生窗口/菜单/生命周期，不需要网页与 Rust 通信。
 
 mod discovery;
+mod hotupdate;
 mod logging;
 mod menu;
 mod probe;
@@ -442,7 +443,8 @@ fn start_health_monitor(app: tauri::AppHandle) {
     });
 }
 
-fn stop_current(app: &tauri::AppHandle) {
+/// 停掉当前侧车并清掉状态（重启 / 热更新 / 退出都走这里）。
+pub(crate) fn stop_sidecar(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
     let running = state.sidecar.lock().ok().and_then(|mut guard| guard.take());
     if let Some(running) = running {
@@ -454,10 +456,24 @@ fn stop_current(app: &tauri::AppHandle) {
 
 pub fn restart_sidecar_now(app: &tauri::AppHandle) -> Result<(), String> {
     logging::line("app", "重启侧车");
-    stop_current(app);
+    stop_sidecar(app);
     let handle = app.clone();
     std::thread::spawn(move || run_launch(handle));
     Ok(())
+}
+
+/// 当前侧车端口（热更新探活用）。
+pub(crate) fn current_sidecar_port(app: &tauri::AppHandle) -> Option<u16> {
+    app.state::<AppState>()
+        .allowed_port
+        .lock()
+        .ok()
+        .and_then(|port| *port)
+}
+
+/// 热更新切换前调用：停掉旧版本，避免文件占用。
+pub(crate) fn stop_sidecar_for_update(app: &tauri::AppHandle) {
+    stop_sidecar(app);
 }
 
 // ---------------------------------------------------------------- commands
@@ -474,7 +490,7 @@ fn restart_sidecar(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
-    stop_current(&app);
+    stop_sidecar(&app);
     app.exit(0);
 }
 
@@ -522,6 +538,7 @@ fn downloads_destination(app: &tauri::AppHandle, url: &Url) -> std::path::PathBu
 
 fn main() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -612,8 +629,19 @@ fn main() {
             let _ = window.show();
 
             start_health_monitor(handle.clone());
-            // 更新检测（L1）：24h 一次，只提示不下载（内部自己起线程，立即返回）
+            // 上次热更新如果崩在半路，先把 overlay 恢复好再启动
+            hotupdate::recover_on_startup(&handle);
+            // 更新检测：pi-web（L1）与应用自身（L2），内部各自起线程
             update::silent_check(&handle);
+            update::silent_app_check(&handle);
+            // 演练钩子：启动 3 秒后自动跑一次「检查更新」，用于端到端验证 L2/L3
+            if std::env::var("PIWEB_UPDATE_CHECK_ON_STARTUP").ok().as_deref() == Some("1") {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    update::manual_check_all(&handle);
+                });
+            }
             std::thread::spawn(move || run_launch(handle));
             Ok(())
         })

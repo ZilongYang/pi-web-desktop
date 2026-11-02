@@ -35,6 +35,8 @@ pub struct BundledVersions {
 #[serde(rename_all = "camelCase")]
 struct CheckState {
     last_checked_at: Option<u64>,
+    #[serde(default)]
+    last_app_checked_at: Option<u64>,
 }
 
 fn now_secs() -> u64 {
@@ -105,6 +107,11 @@ pub fn bundled_versions(app: &tauri::AppHandle) -> BundledVersions {
         }
     }
     versions
+}
+
+/// 供 hotupdate 复用。
+pub fn compare_versions_public(a: &str, b: &str) -> std::cmp::Ordering {
+    compare_versions(a, b)
 }
 
 /// 数值化比较 `1.10.0 > 1.9.0`。返回 std::cmp::Ordering。
@@ -259,12 +266,9 @@ pub fn manual_check(app: &tauri::AppHandle) {
         );
         let latest = fetch_latest_pi_web(proxy.as_deref());
         if let Ok(version) = latest.as_ref() {
-            write_state(
-                &handle,
-                &CheckState {
-                    last_checked_at: Some(now_secs()),
-                },
-            );
+            let mut state = read_state(&handle);
+            state.last_checked_at = Some(now_secs());
+            write_state(&handle, &state);
             crate::logging::line("update", &format!("npm 最新 pi-web：{version}"));
         }
         let (message, can_copy) = build_message(&bundled, &latest);
@@ -282,12 +286,11 @@ pub fn silent_check(app: &tauri::AppHandle) {
         }
     }
     // 先把时间戳写掉：离线时也不会每次启动都重试
-    write_state(
-        app,
-        &CheckState {
-            last_checked_at: Some(now_secs()),
-        },
-    );
+    {
+        let mut state = read_state(app);
+        state.last_checked_at = Some(now_secs());
+        write_state(app, &state);
+    }
 
     let handle = app.clone();
     std::thread::spawn(move || {
@@ -307,6 +310,148 @@ pub fn silent_check(app: &tauri::AppHandle) {
             Ok(version) => crate::logging::line("update", &format!("已是最新（{version}）")),
             Err(error) => crate::logging::line("update", &format!("静默检查失败：{error}")),
         }
+    });
+}
+
+// ---------------------------------------------------------------- L2：应用自更新
+
+use tauri_plugin_updater::UpdaterExt;
+
+fn check_app_update_sync(
+    app: &tauri::AppHandle,
+) -> Result<Option<tauri_plugin_updater::Update>, String> {
+    let updater = app.updater().map_err(|error| error.to_string())?;
+    tauri::async_runtime::block_on(async { updater.check().await.map_err(|error| error.to_string()) })
+}
+
+fn install_app_update(
+    app: &tauri::AppHandle,
+    update: tauri_plugin_updater::Update,
+) -> Result<(), String> {
+    let version = update.version.clone();
+    crate::logging::line("update", &format!("开始下载应用更新 v{version}"));
+    let mut last_logged = 0u64;
+    tauri::async_runtime::block_on(update.download_and_install(
+        |downloaded: usize, total: Option<u64>| {
+            let downloaded = downloaded as u64;
+            if downloaded.saturating_sub(last_logged) >= 20 * 1024 * 1024 {
+                last_logged = downloaded;
+                let total_text = total
+                    .map(|t| format!("{:.0}MB", t as f64 / 1024.0 / 1024.0))
+                    .unwrap_or_else(|| "?".to_string());
+                crate::logging::line(
+                    "update",
+                    &format!(
+                        "下载中 {:.0}MB / {total_text}",
+                        downloaded as f64 / 1024.0 / 1024.0
+                    ),
+                );
+            }
+        },
+        || crate::logging::line("update", "下载完成，正在安装"),
+    ))
+    .map_err(|error| error.to_string())?;
+    crate::logging::line("update", "安装完成，重启应用");
+    app.restart();
+    #[allow(unreachable_code)]
+    Ok(())
+}
+
+fn update_state_touch_app(app: &tauri::AppHandle) {
+    let mut state = read_state(app);
+    state.last_app_checked_at = Some(now_secs());
+    write_state(app, &state);
+}
+
+/// 启动后静默检查应用更新（24h 一次，有更新才提示）。
+pub fn silent_app_check(app: &tauri::AppHandle) {
+    if let Some(last) = read_state(app).last_app_checked_at {
+        if now_secs().saturating_sub(last) < SILENT_INTERVAL_SECS {
+            return;
+        }
+    }
+    update_state_touch_app(app);
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(20));
+        match check_app_update_sync(&handle) {
+            Ok(Some(update)) => {
+                crate::logging::line("update", &format!("应用有新版本 v{}", update.version));
+                let accepted = if headless() {
+                    true
+                } else {
+                    handle
+                        .dialog()
+                        .message(format!(
+                            "应用有新版本 v{}（当前 v{}）。\n\n更新会下载整个应用包（含内置 pi-web 与 Node），完成后自动重启。",
+                            update.version,
+                            env!("CARGO_PKG_VERSION")
+                        ))
+                        .title("Pi Web Desktop · 应用更新")
+                        .buttons(MessageDialogButtons::OkCancelCustom(
+                            "下载并安装".to_string(),
+                            "稍后".to_string(),
+                        ))
+                        .blocking_show()
+                };
+                if accepted {
+                    if let Err(error) = install_app_update(&handle, update) {
+                        crate::logging::line("update", &format!("应用更新失败：{error}"));
+                    }
+                }
+            }
+            Ok(None) => crate::logging::line("update", "应用已是最新"),
+            Err(error) => crate::logging::line("update", &format!("应用更新检查失败：{error}")),
+        }
+    });
+}
+
+fn headless() -> bool {
+    std::env::var("PIWEB_UPDATE_HEADLESS").ok().as_deref() == Some("1")
+}
+
+/// 菜单「检查更新…」的总入口：先看应用本身，再看能热更新的 pi-web。
+pub fn manual_check_all(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        crate::logging::line("update", "手动检查更新");
+        match check_app_update_sync(&handle) {
+            Ok(Some(update)) => {
+                update_state_touch_app(&handle);
+                let accepted = if headless() {
+                    crate::logging::line("update", "headless：自动安装应用更新");
+                    true
+                } else {
+                    handle
+                        .dialog()
+                        .message(format!(
+                            "应用有新版本 v{}（当前 v{}）。\n\n更新会下载整个应用包（含内置 pi-web 与 Node），完成后自动重启。",
+                            update.version,
+                            env!("CARGO_PKG_VERSION")
+                        ))
+                        .title("Pi Web Desktop · 检查更新")
+                        .buttons(MessageDialogButtons::OkCancelCustom(
+                            "下载并安装".to_string(),
+                            "跳过".to_string(),
+                        ))
+                        .blocking_show()
+                };
+                if accepted {
+                    if let Err(error) = install_app_update(&handle, update) {
+                        crate::logging::line("update", &format!("应用更新失败：{error}"));
+                        crate::logging::line("update", "继续检查 pi-web 更新");
+                        crate::hotupdate::manual_check(&handle);
+                    }
+                }
+                return;
+            }
+            Ok(None) => crate::logging::line("update", "应用已是最新"),
+            Err(error) => crate::logging::line(
+                "update",
+                &format!("应用更新检查失败（{error}），继续检查 pi-web"),
+            ),
+        }
+        crate::hotupdate::manual_check(&handle);
     });
 }
 

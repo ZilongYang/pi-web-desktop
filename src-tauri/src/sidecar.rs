@@ -146,9 +146,11 @@ fn node_bin_name() -> &'static str {
     }
 }
 
-fn validate(dir: &Path) -> Option<Sidecar> {
-    let node = dir.join("runtime").join(node_bin_name());
-    let pkg_dir = dir
+/// 从"根目录 + node 路径"组装一个可用的侧车。
+/// 根目录里必须有 `app/node_modules/@agegr/pi-web/bin/pi-web.js`；
+/// 包内那份还额外有 `runtime/node`，运行时 overlay（L3）则复用包内的 node。
+fn from_root(root: &Path, node: PathBuf) -> Option<Sidecar> {
+    let pkg_dir = root
         .join("app")
         .join("node_modules")
         .join("@agegr")
@@ -157,7 +159,7 @@ fn validate(dir: &Path) -> Option<Sidecar> {
     if !node.is_file() || !entry.is_file() {
         return None;
     }
-    let version = read_sidecar_version(dir)
+    let version = read_sidecar_version(root)
         .or_else(|| {
             let text = std::fs::read_to_string(pkg_dir.join("package.json")).ok()?;
             let json: serde_json::Value = serde_json::from_str(&text).ok()?;
@@ -165,7 +167,7 @@ fn validate(dir: &Path) -> Option<Sidecar> {
         })
         .unwrap_or_else(|| "unknown".to_string());
     Some(Sidecar {
-        dir: dir.to_path_buf(),
+        dir: root.to_path_buf(),
         node,
         pkg_dir,
         entry,
@@ -173,30 +175,77 @@ fn validate(dir: &Path) -> Option<Sidecar> {
     })
 }
 
-/// manifest.json 由 scripts/fetch-sidecar.mjs 生成。
-pub fn read_sidecar_version(dir: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(dir.join("manifest.json")).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
-    json.get("piWebVersion")?.as_str().map(|s| s.to_string())
+fn bundled_node(app: &tauri::AppHandle) -> Option<PathBuf> {
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let candidate = resource_dir.join("pi-web").join("runtime").join(node_bin_name());
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("sidecar")
+        .join("runtime")
+        .join(node_bin_name());
+    if dev.is_file() {
+        return Some(dev);
+    }
+    None
 }
 
-/// bundle 里在 Resources/pi-web；dev 下在仓库根的 sidecar/（不复制进 target）。
+/// 解析当前该用哪份侧车，优先级：
+///   1. 运行时热更新装上的 overlay（`<app_local_data_dir>/sidecar`，只含 app/ + manifest.json）
+///   2. 包内 `Resources/pi-web`
+///   3. dev 的仓库根 `sidecar/`
+///
+/// overlay 永远复用包内的 Node —— 这正是 L3"只换 pi-web、不动 Node"的意思。
 pub fn resolve(app: &tauri::AppHandle) -> Result<Sidecar, String> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        candidates.push(resource_dir.join("pi-web"));
-    }
-    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("sidecar"));
+    let mut tried: Vec<String> = Vec::new();
 
-    let mut tried = Vec::new();
-    for candidate in candidates {
-        let shown = candidate.display().to_string();
-        if let Some(sidecar) = validate(&candidate) {
-            crate::logging::line("sidecar", &format!("使用侧车目录 {shown}（pi-web {}）", sidecar.version));
+    if let Ok(local) = app.path().app_local_data_dir() {
+        let root = local.join("sidecar");
+        if root.join("app").is_dir() {
+            if let Some(node) = bundled_node(app) {
+                if let Some(sidecar) = from_root(&root, node) {
+                    crate::logging::line(
+                        "sidecar",
+                        &format!(
+                            "使用热更新侧车 {}（pi-web {}）",
+                            root.display(),
+                            sidecar.version
+                        ),
+                    );
+                    return Ok(sidecar);
+                }
+            }
+        }
+        tried.push(root.display().to_string());
+    }
+
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let root = resource_dir.join("pi-web");
+        let node = root.join("runtime").join(node_bin_name());
+        if let Some(sidecar) = from_root(&root, node) {
+            crate::logging::line(
+                "sidecar",
+                &format!("使用包内侧车 {}（pi-web {}）", root.display(), sidecar.version),
+            );
             return Ok(sidecar);
         }
-        tried.push(shown);
+        tried.push(root.display().to_string());
     }
+
+    let dev_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("sidecar");
+    let dev_node = dev_root.join("runtime").join(node_bin_name());
+    if let Some(sidecar) = from_root(&dev_root, dev_node) {
+        crate::logging::line(
+            "sidecar",
+            &format!("使用开发目录侧车 {}（pi-web {}）", dev_root.display(), sidecar.version),
+        );
+        return Ok(sidecar);
+    }
+    tried.push(dev_root.display().to_string());
+
     Err(format!(
         "找不到可用的侧车目录（已试：{}）。开发环境先跑 `npm run sidecar`。",
         tried.join(" / ")

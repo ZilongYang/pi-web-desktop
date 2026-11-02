@@ -1,0 +1,95 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    runs-on: macos-14          # arm64 runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 装侧车（npm 包 + Node + 裁剪）
+        run: npm run sidecar
+
+      - name: 单元测试
+        run: cd src-tauri && cargo test
+
+      - name: 构建 .app（含 updater 包）
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          ./node_modules/.bin/tauri build --bundles app \
+            --config '{"bundle":{"createUpdaterArtifacts":true}}'
+
+      - name: 打发布包（ad-hoc 签名 / dmg / 侧车包 / SHA256SUMS）
+        run: bash scripts/make-dist.sh
+
+      - name: 生成 updater 清单 latest.json
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, hashlib, subprocess
+          version = json.loads(pathlib.Path("src-tauri/tauri.conf.json").read_text())["version"]
+          sig_path = pathlib.Path("dist") / f"Pi-Web-Desktop-{version}-aarch64.app.tar.gz.sig"
+          tar_path = pathlib.Path("dist") / f"Pi-Web-Desktop-{version}-aarch64.app.tar.gz"
+          if not sig_path.exists():
+              raise SystemExit("缺少 updater 签名文件，检查 TAURI_SIGNING_PRIVATE_KEY")
+          manifest = {
+              "version": version,
+              "notes": f"Pi Web Desktop {version}",
+              "pub_date": subprocess.check_output(
+                  ["date", "-u", "+%Y-%m-%dT%H:%M:%SZ"], text=True
+              ).strip(),
+              "platforms": {
+                  "darwin-aarch64": {
+                      "signature": sig_path.read_text().strip(),
+                      "url": f"https://github.com/ZilongYang/pi-web-desktop/releases/download/v{version}/{tar_path.name}",
+                  }
+              },
+          }
+          pathlib.Path("dist/latest.json").write_text(json.dumps(manifest, indent=2))
+          print(json.dumps(manifest, indent=2)[:400])
+          PY
+
+      - name: 发布 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
+          gh release create "v$VERSION" \
+            "dist/Pi-Web-Desktop-$VERSION-aarch64.dmg" \
+            "dist/Pi-Web-Desktop-$VERSION-aarch64.zip" \
+            "dist/Pi-Web-Desktop-aarch64.dmg" \
+            "dist/Pi-Web-Desktop-aarch64.zip" \
+            "dist/Pi-Web-Desktop-$VERSION-aarch64.app.tar.gz" \
+            "dist/Pi-Web-Desktop-$VERSION-aarch64.app.tar.gz.sig" \
+            "dist/latest.json" \
+            "dist/"piweb-app-*.tar.gz \
+            "dist/piweb-sidecar.json" \
+            "dist/SHA256SUMS" \
+            --title "Pi Web Desktop v$VERSION" \
+            --notes "Pi Web Desktop v$VERSION —— 见 README 与 docs/。" \
+            || gh release upload "v$VERSION" dist/* --clobber

@@ -315,7 +315,55 @@ pub fn silent_check(app: &tauri::AppHandle) {
 
 // ---------------------------------------------------------------- L2：应用自更新
 
+use tauri::{Emitter, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_updater::UpdaterExt;
+
+const PROGRESS_WINDOW: &str = "update-progress";
+
+static LAST_PROGRESS: std::sync::Mutex<Option<serde_json::Value>> = std::sync::Mutex::new(None);
+
+fn open_progress_window(app: &tauri::AppHandle) {
+    if app.get_webview_window(PROGRESS_WINDOW).is_some() {
+        return;
+    }
+    let built = WebviewWindowBuilder::new(
+        app,
+        PROGRESS_WINDOW,
+        WebviewUrl::App("update.html".into()),
+    )
+    .title("Pi Web Desktop 更新")
+    .inner_size(470.0, 200.0)
+    .resizable(false)
+    .center()
+    .always_on_top(true)
+    .build();
+    if let Err(error) = built {
+        crate::logging::line("update", &format!("无法打开进度窗口：{error}"));
+    }
+}
+
+fn close_progress_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window(PROGRESS_WINDOW) {
+        let _ = window.close();
+    }
+}
+
+fn progress(app: &tauri::AppHandle, phase: &str, payload: serde_json::Value) {
+    let mut value = payload;
+    if let Some(map) = value.as_object_mut() {
+        map.insert("phase".into(), serde_json::Value::String(phase.to_string()));
+    }
+    if let Ok(mut slot) = LAST_PROGRESS.lock() {
+        *slot = Some(value.clone());
+    }
+    let _ = app.emit_to(PROGRESS_WINDOW, "update-progress", value);
+}
+
+/// 进度窗口加载后会主动拉一次当前进度（事件可能早于页面加载）。
+#[tauri::command]
+pub fn get_update_progress() -> Option<serde_json::Value> {
+    LAST_PROGRESS.lock().ok().and_then(|value| value.clone())
+}
 
 fn check_app_update_sync(
     app: &tauri::AppHandle,
@@ -330,10 +378,25 @@ fn install_app_update(
 ) -> Result<(), String> {
     let version = update.version.clone();
     crate::logging::line("update", &format!("开始下载应用更新 v{version}"));
+
+    // 立刻给用户可见的进度窗口：此前只有日志，13 秒里界面毫无反应，用户体验很差
+    open_progress_window(app);
+    progress(
+        app,
+        "downloading",
+        serde_json::json!({ "version": version, "downloaded": 0, "total": null }),
+    );
+
     let mut last_logged = 0u64;
-    tauri::async_runtime::block_on(update.download_and_install(
-        |downloaded: usize, total: Option<u64>| {
-            let downloaded = downloaded as u64;
+    let mut last_emitted = std::time::Instant::now() - Duration::from_secs(5);
+    // updater 的回调第一个参数是「这一块的长度」，不是累计值（踩过：进度条一直 0MB）
+    let mut accumulated: u64 = 0;
+    let app_for_chunk = app.clone();
+    let version_for_chunk = version.clone();
+    let result = tauri::async_runtime::block_on(update.download_and_install(
+        move |chunk_length: usize, total: Option<u64>| {
+            accumulated += chunk_length as u64;
+            let downloaded = accumulated;
             if downloaded.saturating_sub(last_logged) >= 20 * 1024 * 1024 {
                 last_logged = downloaded;
                 let total_text = total
@@ -347,12 +410,70 @@ fn install_app_update(
                     ),
                 );
             }
+            if last_emitted.elapsed() >= Duration::from_millis(200) {
+                last_emitted = std::time::Instant::now();
+                progress(
+                    &app_for_chunk,
+                    "downloading",
+                    serde_json::json!({
+                        "version": version_for_chunk,
+                        "downloaded": downloaded,
+                        "total": total,
+                    }),
+                );
+            }
         },
-        || crate::logging::line("update", "下载完成，正在安装"),
-    ))
-    .map_err(|error| error.to_string())?;
-    crate::logging::line("update", "安装完成，重启应用");
-    app.restart();
+        || {
+            crate::logging::line("update", "下载完成，正在安装");
+        },
+    ));
+
+    if let Err(error) = result {
+        progress(
+            app,
+            "failed",
+            serde_json::json!({ "message": error.to_string() }),
+        );
+        std::thread::sleep(Duration::from_millis(600));
+        close_progress_window(app);
+        return Err(error.to_string());
+    }
+
+    progress(app, "ready", serde_json::json!({}));
+    crate::logging::line("update", "安装完成，等待用户确认重启");
+    std::thread::sleep(Duration::from_millis(700));
+    close_progress_window(app);
+
+    let restart = if headless() {
+        true
+    } else {
+        app.dialog()
+            .message(format!(
+                "新版本 v{version} 已安装完成，重启应用后生效。\n\n现在重启，还是下次启动时生效？"
+            ))
+            .title("Pi Web Desktop · 更新完成")
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "立即重启".to_string(),
+                "稍后".to_string(),
+            ))
+            .blocking_show()
+    };
+
+    if restart {
+        crate::logging::line("update", "用户选择立即重启");
+        app.restart();
+    } else {
+        crate::logging::line("update", "用户选择稍后重启（新版本已装好，下次启动生效）");
+        let _ = app
+            .dialog()
+            .message(format!("v{version} 已安装，下次启动 Pi Web Desktop 时生效。"))
+            .title("Pi Web Desktop")
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "好的".to_string(),
+                "关闭".to_string(),
+            ))
+            .blocking_show();
+    }
     #[allow(unreachable_code)]
     Ok(())
 }

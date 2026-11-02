@@ -589,6 +589,7 @@ fn main() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             get_status,
+            update::get_update_progress,
             restart_sidecar,
             quit_app,
             open_logs,

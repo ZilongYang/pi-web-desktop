@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pi Web Desktop 更新</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        background: #0b0d12;
+        color: #e8ecff;
+        font: 13px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+        display: flex; align-items: center; justify-content: center;
+        user-select: none;
+      }
+      .box { width: 100%; padding: 22px 24px; }
+      h1 { margin: 0 0 2px; font-size: 14px; font-weight: 600; letter-spacing: .2px; }
+      .version { color: #8f9bd6; font-size: 12px; margin-bottom: 14px; }
+      .bar { height: 6px; border-radius: 999px; background: #1a2033; overflow: hidden; }
+      .bar i { display: block; height: 100%; width: 0%; border-radius: 999px;
+               background: linear-gradient(90deg, #5b7cff, #7aa2ff); transition: width .25s ease; }
+      .row { display: flex; justify-content: space-between; margin-top: 8px;
+             color: #8f9bd6; font-size: 12px; font-variant-numeric: tabular-nums; }
+      .hint { margin-top: 14px; color: #56607f; font-size: 11px; min-height: 16px; }
+      .indeterminate .bar i { width: 35% !important; animation: slide 1.1s ease-in-out infinite; }
+      @keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(320%); } }
+    </style>
+  </head>
+  <body>
+    <div class="box" id="box">
+      <h1 id="title">正在准备更新…</h1>
+      <div class="version" id="version"></div>
+      <div class="bar"><i id="fill"></i></div>
+      <div class="row"><span id="left">—</span><span id="right"></span></div>
+      <div class="hint" id="hint">下载完成后会询问是否重启。</div>
+    </div>
+    <script>
+      const api = window.__TAURI__;
+      const $ = (id) => document.getElementById(id);
+      const box = $("box"), fill = $("fill"), title = $("title"), version = $("version");
+      const left = $("left"), right = $("right"), hint = $("hint");
+
+      function mb(bytes) { return (bytes / 1024 / 1024).toFixed(0); }
+
+      function render(p) {
+        if (!p) return;
+        if (p.phase === "downloading") {
+          box.classList.remove("indeterminate");
+          title.textContent = "正在下载更新";
+          if (p.version) version.textContent = "Pi Web Desktop v" + p.version;
+          const total = p.total || 0;
+          const percent = total > 0 ? Math.min(100, Math.round((p.downloaded / total) * 100)) : null;
+          fill.style.width = percent === null ? "0%" : percent + "%";
+          left.textContent = mb(p.downloaded) + " MB" + (total ? " / " + mb(total) + " MB" : "");
+          right.textContent = percent === null ? "" : percent + "%";
+          hint.textContent = "下载完成后会询问是否重启。";
+        } else if (p.phase === "installing") {
+          box.classList.add("indeterminate");
+          title.textContent = "正在安装";
+          fill.style.width = "60%";
+          left.textContent = "";
+          right.textContent = "";
+          hint.textContent = "马上就好…";
+        } else if (p.phase === "ready") {
+          box.classList.remove("indeterminate");
+          title.textContent = "安装完成";
+          fill.style.width = "100%";
+          hint.textContent = "即将询问是否重启应用。";
+        } else if (p.phase === "failed") {
+          box.classList.remove("indeterminate");
+          title.textContent = "更新失败";
+          hint.textContent = p.message || "请查看日志。";
+        }
+      }
+
+      if (api) {
+        api.event.listen("update-progress", (e) => render(e.payload || {}));
+        api.core.invoke("get_update_progress").then(render).catch(() => {});
+      }
+    </script>
+  </body>
+</html>

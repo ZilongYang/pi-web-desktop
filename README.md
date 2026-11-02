@@ -4,6 +4,8 @@
 
 和命令行 `pi`、浏览器版 pi-web 共享同一份 `~/.pi/agent`（会话、模型、skills、信任设置）。
 
+> 当前进度与待办见 [ROADMAP.md](ROADMAP.md)；文档入口见 [docs/README.md](docs/README.md)。
+
 ## 下载 / 安装（macOS）
 
 从 [Releases](https://github.com/ZilongYang/pi-web-desktop/releases/latest) 下载 `Pi-Web-Desktop-aarch64.dmg`（或 `.zip`），拖进「应用程序」。
@@ -178,9 +180,12 @@ docs/PLAN-2026-11-01.md# 方案原文（批准版）+ 事后补记
 
 ## 文档
 
-- 方案与实施记录：[docs/PLAN-2026-11-01.md](docs/PLAN-2026-11-01.md)（初版壳）、[docs/PLAN-2026-11-02-L2L3.md](docs/PLAN-2026-11-02-L2L3.md)（更新机制）
-- 验收与回归：[docs/QA-2026-11-01.md](docs/QA-2026-11-01.md)
-- 发版清单：[docs/RELEASE-CHECKLIST-0.2.0.md](docs/RELEASE-CHECKLIST-0.2.0.md)
+总入口：[docs/README.md](docs/README.md)（每份文档的作用与更新规则）
+
+- **路线图 / Backlog**：[ROADMAP.md](ROADMAP.md) —— 现在做到哪、接下来做什么（新需求先记这里）
+- 方案与实施记录：[PLAN-2026-11-01.md](docs/PLAN-2026-11-01.md)（初版壳）、[PLAN-2026-11-02-L2L3.md](docs/PLAN-2026-11-02-L2L3.md)（更新机制）
+- 验收与回归：[QA-2026-11-01.md](docs/QA-2026-11-01.md)
+- 发版清单：[RELEASE-CHECKLIST-0.2.0.md](docs/RELEASE-CHECKLIST-0.2.0.md)
 
 ## License
 

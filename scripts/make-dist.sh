@@ -111,10 +111,16 @@ ZIP="$DIST/Pi-Web-Desktop-$VERSION-$AARCH.zip"
 ditto -c -k --keepParent "$APP" "$ZIP"
 ok "zip  $(basename "$ZIP")"
 
-DMG_LOG="$DIST/diskutil.log"
-diskutil image create from --format UDZO --volumeName "Pi Web Desktop" \
-  "$DIST/staging" "$DMG" > "$DMG_LOG" 2>&1 \
-  || { cat "$DMG_LOG" >&2; fail "创建 dmg 失败（diskutil 需要挂载卷，不能在受限沙箱里跑）"; }
+DMG_LOG="$DIST/dmg.log"
+# macOS 27 的 diskutil 新语法（hdiutil 已废弃）；CI/旧系统上 diskutil 还不支持 --volumeName，
+# 就退回 hdiutil。两条路都在日志里留痕。
+if diskutil image create from --help 2>&1 | grep -q "volumeName"; then
+  diskutil image create from --format UDZO --volumeName "Pi Web Desktop" \
+    "$DIST/staging" "$DMG" > "$DMG_LOG" 2>&1
+else
+  hdiutil create -volname "Pi Web Desktop" -srcfolder "$DIST/staging" \
+    -ov -format UDZO "$DMG" > "$DMG_LOG" 2>&1
+fi || { cat "$DMG_LOG" >&2; fail "创建 dmg 失败（需要能挂载磁盘映像的环境，受限沙箱里不行）"; }
 ok "dmg  $(basename "$DMG")"
 rm -rf "$DIST/staging" "$DMG_LOG"
 

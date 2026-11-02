@@ -552,12 +552,20 @@ fn open_in_browser(app: tauri::AppHandle) {
     }
 }
 
-fn new_window_for(app: &tauri::AppHandle, url: Url) -> Result<tauri::WebviewWindow<tauri::Wry>, String> {
+fn new_window_for(
+    app: &tauri::AppHandle,
+    url: Url,
+    features: tauri::webview::NewWindowFeatures,
+) -> Result<tauri::WebviewWindow<tauri::Wry>, String> {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
     let label = format!("page-{}", COUNTER.fetch_add(1, Ordering::Relaxed) + 1);
     let window = WebviewWindowBuilder::new(app, label, WebviewUrl::External(url.clone()))
         .title(url.as_str())
         .inner_size(1100.0, 820.0)
+        // 关键：必须沿用调用方 webview 的配置。macOS 的 WKUIDelegate.createNewPage
+        // 要求新 webview 与发起方使用同一 configuration，否则 WebKit 直接抛
+        // NSException（表现为整个 App abort）。之前没传 -> 点「完整历史」必崩。
+        .window_features(features)
         .build()
         .map_err(|e| e.to_string())?;
     Ok(window)
@@ -633,9 +641,9 @@ fn main() {
 
             let window = WebviewWindowBuilder::from_config(&handle, &window_config)?
                 .on_navigation(move |url| url_allowed(&nav_guard, url))
-                .on_new_window(move |url, _features| {
+                .on_new_window(move |url, features| {
                     if url_allowed(&new_window_guard, &url) {
-                        match new_window_for(&new_window_app, url) {
+                        match new_window_for(&new_window_app, url, features) {
                             Ok(window) => NewWindowResponse::Create { window },
                             Err(error) => {
                                 logging::line("nav", &format!("开新窗口失败：{error}"));

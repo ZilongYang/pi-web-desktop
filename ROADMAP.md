@@ -72,6 +72,18 @@
 - **目标**：改成「检查应用更新…」+「更新 pi-web…」，或在「检查更新…」的弹窗里先说明"将检查 App 与 pi-web 两项"。
 - **落点**：`src-tauri/src/menu.rs`（文案）与 `update.rs`（弹窗首句）。
 
+### 缺陷修复记录
+
+#### B1. 点击「完整历史」导致 App 崩溃 —— ✅ 0.2.8 修复
+
+- **现象**：点 pi-web 侧栏的「完整历史」，App 直接退出，macOS 弹「意外退出」。
+- **崩溃报告**：`~/Library/Logs/DiagnosticReports/pi-web-desktop-2026-11-03-030447.ips`
+  - `EXC_CRASH / SIGABRT`，崩溃线程是主线程
+  - 关键栈：`WebKit::UIDelegate::UIClient::createNewPage` → `+[NSException raise:format:]` → `abort`
+- **根因**：pi-web 的「完整历史」用 `window.open` 开新窗口，走到我们的 `on_new_window`；我们创建新窗口时**没有沿用发起方 webview 的 configuration**。Tauri 文档明确：macOS 上 `NewWindowResponse::Create` 的 webview 必须与调用方使用同一 configuration（`WindowFeatures.webview_configuration`），否则 WebKit 直接抛 NSException，进程 abort。
+- **修复**（0.2.8）：`new_window_for()` 增加 `window_features(features)`，`on_new_window` 把 WebKit 传来的 `features` 透传。同一路径也覆盖「会话 ⋯ → 新标签页打开」。
+- **待用户复验**：0.2.8 上点「完整历史」与「新标签页打开会话」都应正常开新窗口。
+
 ### P1 — 功能验收与平台
 
 #### F3. 功能手测清单（决定能不能日常用）
@@ -107,6 +119,7 @@
 
 | 版本 | 内容 |
 |---|---|
+| 0.2.8 | 修复点击「完整历史」崩溃（新窗口必须沿用发起方 webview configuration） |
 | 0.2.7 | L3 热更新进度窗（与 L2 一致）；「更新 pi-web…」独立入口；每次启动都检查更新（同版本只提醒一次）；「关于」下方加检查更新；内置 pi-web 0.14.2 / pi SDK 1.5.0 |
 | 0.2.5 | 菜单全中文；新增「视图」菜单（放大 ⌘= / 缩小 ⌘- / 实际大小 ⌘0 / 全屏）；缩放记忆；复制服务地址进剪贴板；帮助菜单加 GitHub |
 | 0.2.4 | 验证用版本（与 0.2.3 同功能），用于真机验证更新流程 |

@@ -79,6 +79,13 @@
 - [x] 内置 pi-web 0.14.2 / pi SDK 1.5.0
 - [x] 发布 v0.2.7
 
+## 0.2.8（修复「完整历史」崩溃）
+
+- [x] 崩溃报告定位：`WebKit::UIDelegate::UIClient::createNewPage` → NSException → SIGABRT（主线程）
+- [x] 根因：新窗口没沿用发起方 webview 的 configuration（Tauri 文档对 macOS 的硬性要求）
+- [x] 修复：`new_window_for()` 加 `window_features(features)`，`on_new_window` 透传
+- [x] 发布 v0.2.8；待用户复验「完整历史」与「新标签页打开会话」
+
 ## 每次发版的固定动作
 
 ```bash

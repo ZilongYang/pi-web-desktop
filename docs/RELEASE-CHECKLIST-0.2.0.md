@@ -26,6 +26,17 @@
 - [x] 远端 tag `v0.2.1` 与 Release 对齐，触发 release workflow 复验
 - [ ] Windows 侧（NSIS + `taskkill /T /F` 路径）未验证 —— 见 README「平台」
 
+## 0.2.3（更新体验重做）
+
+用户实测反馈："点下载并安装没有进度、App 突然关闭再启动，整个流程很差。"
+
+- [x] 新增进度窗口 `ui/update.html`：标题栏「Pi Web Desktop 更新」+「正在下载 Pi Web Desktop vX」+ 进度条 + 已下载/总大小 + 百分比
+- [x] 修进度 bug：updater 回调第一个参数是**本次 chunk 长度**而不是累计值（`on_chunk(chunk.len(), content_length)`），之前进度一直 0MB；改为累加
+- [x] 安装完成不再直接 `app.restart()`：弹「新版本已就绪，重启后生效」[立即重启 / 稍后]；选稍后则下次启动生效
+- [x] 进度窗 `always_on_top`，capabilities 增加 `update-progress` 窗口
+- [x] 实拍验证：本地假 Release（限速 12MB/s）→ 进度窗实时显示 40/60/80/100MB 与百分比（截图 docs/screenshot-update-progress.png）
+- 注意：0.2.2 → 0.2.3 这次升级仍走旧体验（进度窗代码在 0.2.3 里），从 0.2.3 起生效
+
 ## 每次发版的固定动作
 
 ```bash

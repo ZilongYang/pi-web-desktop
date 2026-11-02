@@ -96,6 +96,24 @@ cargo build                 # 调试构建
 - **首次启动会重写 `Resources/pi-web/app/node_modules/@agegr/pi-web/.next/prerender-manifest.json`**（pi-web launcher 轮换 preview 密钥的安全设计）。之后 `codesign --deep --strict` 会因这一个数据文件报签名不符；签名校验请在本机首次运行**之前**做，或改用 Developer ID + 重新签名的发布流程。
 - **附着模式**：连的是别人启动的 server，退出时不会杀它；桌面窗口与浏览器窗口的 localStorage 互不共享（WKWebView 的数据目录按 app 隔离）。
 
+## 菜单
+
+全中文，跟系统语言一致（Tauri 自带的 `Menu::default()` 只有英文、而且**没有 View 菜单**，所以这里自己拼）：
+
+![菜单](docs/screenshot-menu-chinese.png)
+
+| 菜单 | 内容 |
+|---|---|
+| Pi Web Desktop | 关于 / 服务 / 隐藏 / 退出（⌘Q） |
+| 文件 | 关闭窗口（⌘W） |
+| 编辑 | 撤销 ⌘Z / 重做 ⇧⌘Z / 剪切 ⌘X / 拷贝 ⌘C / 粘贴 ⌘V / 全选 ⌘A |
+| **视图** | **放大 ⌘= / 缩小 ⌘- / 实际大小 ⌘0 / 进入全屏**；档位 50%–300%，会记住（写进 `config.json` 的 `zoom`） |
+| 窗口 | 最小化 / 缩放窗口 |
+| Pi Web | 重新加载页面 ⌘R / 重启服务 ⇧⌘R / 检查更新… / 在浏览器中打开 / 复制服务地址 / 打开日志目录 / 开发者工具 ⌥⌘I |
+| 帮助 | GitHub 仓库 |
+
+页面缩放只影响显示，不影响终端面板里执行的命令。
+
 ## 更新
 
 三层机制，都是「菜单 → 检查更新…」的一部分：

@@ -207,6 +207,14 @@ fn run_launch(app: tauri::AppHandle) {
                 *mode = Mode::Failed;
             }
             status_failed(&app, "找不到内置的 pi-web 运行时", error.clone());
+            // 自动化测试 / CI 里不要弹窗（否则会跳到用户屏幕上，0.3.1-beta.2 踩过）
+            if std::env::var("PIWEB_UPDATE_HEADLESS").ok().as_deref() == Some("1")
+                || std::env::var("PIWEB_NO_DIALOG").ok().as_deref() == Some("1")
+            {
+                logging::line("app", "headless：启动失败不弹窗");
+                app.exit(1);
+                return;
+            }
             // true = 第一个按钮「退出」
             if app
                 .dialog()
@@ -801,8 +809,13 @@ fn main() {
             // 用来在没有 GUI 自动化权限的环境里验证「App 能启动 + 窗口几何存取」，常规启动不受影响。
             if std::env::var("PIWEB_WINDOW_PROBE").ok().as_deref() == Some("1") {
                 let probe_handle = app.handle().clone();
+                // 探针延时可调：smoke-app 要留时间确认「侧车真的在服务」
+                let delay = std::env::var("PIWEB_WINDOW_PROBE_DELAY_SECS")
+                    .ok()
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or(3);
                 std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    std::thread::sleep(std::time::Duration::from_secs(delay));
                     if let Some(window) = probe_handle.get_webview_window("main") {
                         window_state::probe_and_save(&probe_handle, &window);
                     }

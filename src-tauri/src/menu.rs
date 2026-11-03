@@ -47,7 +47,11 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                 &PredefinedMenuItem::hide_others(app, Some("隐藏其他"))?,
                 &PredefinedMenuItem::show_all(app, Some("显示全部"))?,
                 &PredefinedMenuItem::separator(app)?,
-                &PredefinedMenuItem::quit(app, Some("退出 Pi Web Desktop"))?,
+                // 不用系统预定义的 quit：macOS 上它走 AppKit terminate，绕过 ExitRequested，
+                // 于是"退出确认"拦不住 ⌘Q。用自定义项（同样挂 ⌘Q）走我们自己的事件处理。
+                &MenuItemBuilder::with_id("quit_app", "退出 Pi Web Desktop")
+                    .accelerator("CmdOrCtrl+Q")
+                    .build(app)?,
             ],
         )?;
         menu.append(&app_submenu)?;
@@ -228,6 +232,11 @@ pub fn on_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
             if let Err(error) = crate::restart_sidecar_now(app) {
                 crate::logging::line("menu", &format!("重启失败：{error}"));
             }
+        }
+        "quit_app" => {
+            // 走 app.exit() -> RunEvent::ExitRequested -> quit_guard 弹确认框
+            crate::logging::line("quit", "收到退出请求（菜单 / ⌘Q）");
+            app.exit(0);
         }
         "check_update" => crate::update::manual_check_all(app),
         // 菜单栏托盘专有的菜单项（托盘菜单与主菜单共用同一个全局监听，见 tray.rs 的注释）

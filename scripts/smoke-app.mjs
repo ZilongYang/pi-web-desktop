@@ -87,7 +87,25 @@ function readConfig(configDir) {
 }
 
 /** 启动一次 App，等它自己退出（探针会 exit(0)），返回输出。 */
-function runOnce({ binary, configDir, label }) {
+function httpOk(port) {
+  return new Promise((resolve) => {
+    const socket = net.connect({ port, host: "127.0.0.1" });
+    socket.setTimeout(700);
+    socket.on("connect", () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.on("error", () => resolve(false));
+    socket.on("timeout", () => {
+      socket.destroy();
+      resolve(false);
+    });
+  });
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function runOnce({ binary, configDir, port, label }) {
   return new Promise((resolve) => {
     const child = spawn(binary, [], {
       cwd: path.dirname(binary),
@@ -95,10 +113,12 @@ function runOnce({ binary, configDir, label }) {
         ...process.env,
         PIWEB_CONFIG_DIR: configDir,
         PIWEB_WINDOW_PROBE: "1",
+        PIWEB_WINDOW_PROBE_DELAY_SECS: "10",
         PIWEB_UPDATE_HEADLESS: "1",
         PIWEB_SKIP_VERSION_CHECK: "1",
       },
       stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
     });
 
     let output = "";
@@ -117,16 +137,40 @@ function runOnce({ binary, configDir, label }) {
       resolve(result);
     };
 
-    const timer = setTimeout(() => {
+    const killTree = () => {
       try {
-        child.kill("SIGKILL");
+        process.kill(-child.pid, "SIGKILL");
       } catch {
-        /* ignore */
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          /* ignore */
+        }
       }
+    };
+
+    const timer = setTimeout(() => {
+      killTree();
       finish({ timedOut: true, code: null, output, label });
     }, EXIT_TIMEOUT_MS);
 
-    child.on("exit", (code) => finish({ timedOut: false, code, output, label }));
+    // 启动后尽快确认侧车真的在服务（否则「窗口能开但服务没起来」会被误判为通过）
+    let served = false;
+    const pollStarted = Date.now();
+    const poll = setInterval(async () => {
+      if (served || settled) return;
+      if (await httpOk(port)) {
+        served = true;
+        clearInterval(poll);
+      } else if (Date.now() - pollStarted > 12_000) {
+        clearInterval(poll);
+      }
+    }, 300);
+
+    child.on("exit", (code) => {
+      killTree(); // 侧车/子进程一并收掉，避免残留
+      finish({ timedOut: false, code, output, served, label });
+    });
     child.on("error", (error) => finish({ timedOut: false, code: null, output: `${output}\n${error.message}`, label }));
   });
 }
@@ -196,7 +240,14 @@ async function main() {
     const firstPort = await freePort();
     writeConfig(firstConfigDir, { port: firstPort, zoom: 1 });
 
-    const first = await runOnce({ binary: runBinary, configDir: firstConfigDir, label: "first" });
+    const first = await runOnce({ binary: runBinary, configDir: firstConfigDir, port: firstPort, label: "first" });
+    // DSH/沙箱父进程里启动副本 App 会被 macOS 拒绝 sandbox extension -> 资源找不到。
+    // 这不是产物问题（CI/普通终端正常），明确 SKIP，别误报也别弹窗。
+    if (first.output.includes("sandbox_extension_issue_file_to_process")) {
+      console.log("[smoke-app] SKIP：当前 shell 的沙箱阻止启动副本 App（请在普通终端或 CI 里跑）");
+      printOutput(first);
+      return;
+    }
     if (looksLikeEnvironmentSkip(first)) {
       console.log("[smoke-app] SKIP：当前环境起不了 GUI（无 WindowServer？）");
       printOutput(first);
@@ -224,6 +275,14 @@ async function main() {
       } else {
         bad(`config.json 里没有有效的 window 几何：${JSON.stringify(geometry)}`);
       }
+      if (first.served) {
+        ok(`侧车真的在服务（http://127.0.0.1:${firstPort}/ 可连）`);
+      } else {
+        bad("侧车没有在监听端口（窗口起来了但服务没起）—— 检查启动失败日志");
+      }
+      if (first.output.includes("[failed]")) {
+        bad("启动失败：日志里出现 [failed]");
+      }
       if (first.output.includes("window-probe")) ok("探针输出正常（window-probe）");
     }
 
@@ -233,7 +292,7 @@ async function main() {
     const wanted = { x: 120, y: 140, width: 1000, height: 680 };
     writeConfig(secondConfigDir, { port: secondPort, zoom: 1, window: wanted });
 
-    const second = await runOnce({ binary: runBinary, configDir: secondConfigDir, label: "second" });
+    const second = await runOnce({ binary: runBinary, configDir: secondConfigDir, port: secondPort, label: "second" });
     const restoreLine = `恢复窗口 ${wanted.width}×${wanted.height} @ (${wanted.x}, ${wanted.y})`;
     if (second.timedOut) {
       bad("第二轮启动超时");

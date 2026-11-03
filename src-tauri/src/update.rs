@@ -192,7 +192,7 @@ fn build_message(bundled: &BundledVersions, latest: &Result<String, String>) -> 
             format!(
                 "检测到新版 pi-web：{latest}（内置 {}）。\n\n{header}\n\n\
                  pi SDK 由 pi-web 精确锁定，会跟着一起升级。\n\n\
-                 想现在就用上：菜单「Pi Web → 检查更新…」，可以直接下载并切换 pi-web（只换 pi-web，不重装 App）。\n\
+                 想现在就用上：菜单「Pi Web → 更新 pi-web…」，可以直接下载并切换 pi-web（只换 pi-web，不重装 App）。\n\
                  或者重新构建整个 App（约 2 分钟）：\n\n\
                  {UPGRADE_COMMAND}",
                 bundled.pi_web
@@ -248,7 +248,7 @@ fn show_dialog(app: &tauri::AppHandle, message: &str, can_copy: bool) {
     let copy = app
         .dialog()
         .message(message.to_string())
-        .title("Pi Web Desktop · 检查更新")
+        .title("Pi Web Desktop · 检查 pi-web 更新")
         .buttons(if can_copy {
             MessageDialogButtons::OkCancelCustom("复制升级命令".to_string(), "知道了".to_string())
         } else {
@@ -517,7 +517,8 @@ fn headless() -> bool {
     std::env::var("PIWEB_UPDATE_HEADLESS").ok().as_deref() == Some("1")
 }
 
-/// 菜单「检查更新…」的总入口：先看应用本身，再看能热更新的 pi-web。
+/// 菜单「检查应用更新…」的总入口：先看应用本身，再看能热更新的 pi-web
+/// （F17：菜单文案与弹窗都要讲清楚这一步只处理应用更新）。
 pub fn manual_check_all(app: &tauri::AppHandle) {
     let handle = app.clone();
     std::thread::spawn(move || {
@@ -532,11 +533,13 @@ pub fn manual_check_all(app: &tauri::AppHandle) {
                     handle
                         .dialog()
                         .message(format!(
-                            "应用有新版本 v{}（当前 v{}）。\n\n更新会下载整个应用包（含内置 pi-web 与 Node），完成后自动重启。",
+                            "应用有新版本 v{}（当前 v{}）。\n\n\
+                             这里只处理应用本身的更新；跳过或已是最新时，会继续检查 pi-web 更新。\n\n\
+                             更新会下载整个应用包（含内置 pi-web 与 Node），完成后自动重启。",
                             update.version,
                             env!("CARGO_PKG_VERSION")
                         ))
-                        .title("Pi Web Desktop · 检查更新")
+                        .title("Pi Web Desktop · 检查应用更新")
                         .buttons(MessageDialogButtons::OkCancelCustom(
                             "下载并安装".to_string(),
                             "跳过".to_string(),

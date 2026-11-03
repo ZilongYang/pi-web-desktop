@@ -8,21 +8,24 @@
 把 [pi-web](https://github.com/agegr/pi-web)（Next.js 服务端 + 浏览器 UI）包成原生桌面 App：**自带 Node 运行时**，双击即用，与 `pi` CLI / 浏览器版共享 `~/.pi/agent`。
 
 - 仓库：<https://github.com/ZilongYang/pi-web-desktop>（MIT）
-- 最新版本：**v0.2.8**（内置 pi-web 0.14.2 / pi SDK 1.5.0 / Node 22.23.4）
+- 最新版本：**v0.2.9**（内置 pi-web 0.14.2 / pi SDK 1.5.0 / Node 22.23.4）—— 本地已构建验证，**待发布**
   - v0.2.6 已撤回（它把 0.14.2 打进包，消耗掉当时的 L3 验证场景），其内容并入 0.2.7。
-  - v0.2.8 修复「完整历史」崩溃（B1）。**本机已装 0.2.8，线上 latest 也是 0.2.8。**
+  - v0.2.8 修复「完整历史」崩溃（B1）。
+  - v0.2.9 修 B2 导出 HTML（打补丁容忍 0 匹配）+ F18 冒烟断言 + F15 关于面板版本 + F17 菜单文案。
 - 平台：macOS 14+ arm64（Windows 代码路径已写、未验证；Linux 未验证）
 
-## 下次继续（2026-11-03 下午）
+## 下次继续（2026-11-03 晚上）
 
-当前状态：**v0.2.8 已发布、本机已安装**；L2/L3 都真机闭环；只剩一个上游引起的导出问题和一个待定方案。
+当前状态：**v0.2.9 已本地构建 + smoke 验证通过**；B2 用方案 B（打补丁）修掉；F18 让这类"首页正常但某接口 500"在发版前可见。
 
-1. **先定 B2 方案**（导出 HTML 报 `sortChildren expected 1 match` 那个）：
-   - 选项：A 内置降级 pi-web 0.14.1/SDK 1.4.0；B 给导出路由打"容忍 0 匹配"补丁；C 等上游；D 临时走 CLI 导出。
-   - 倾向：**B 为长期方案**（先验证 SDK 1.5.0 模板已是迭代实现），A 可作立即止血。
-2. **顺手做 F18**（smoke 加导出接口断言）—— 以后这类"首页正常但某接口 500"能在发版前发现。
-3. 然后按用户 2026-11-03 的新需求排期：**F15 关于面板显示 pi-web 版本**、**F16 菜单栏图标 + 菜单**（F16 需先定关窗行为：A 保持关窗即退出 / B 关窗隐藏到菜单栏）。
-4. 再往后：F17 菜单文案区分、F14 L3 清单位置（CI 覆盖 + CDN 缓存）、Windows 支持（F4）。
+1. **F16 菜单栏托盘** —— 关窗行为已定 **B（关窗隐藏到菜单栏，不退出）**：
+   - `Cargo.toml` 给 tauri 加 `tray-icon` feature；`main.rs` 用 `TrayIconBuilder` + 复用 `menu.rs` 的动作函数；
+   - 托盘菜单：显示/隐藏主窗口 · 在浏览器中打开 · 检查应用更新… · 更新 pi-web… · 打开日志目录 · 退出；
+   - 要改 `RunEvent::ExitRequested`：关窗只隐藏、不退出；只有「退出」才停侧车退出。图标用模板图（`icon_as_template(true)`）。
+2. **F14 L3 清单改位置**（CI `--clobber` 覆盖 + CDN 5 分钟缓存两个坑）。
+3. **Windows 支持（F4）**：先加 Windows CI job 验"能构建"，再找真机装一次。
+4. 小项：F6 下载可取消、F7 检查中反馈、F8 失败给建议、F9 缩放档位可调。
+5. L3 真实演练（F5）继续等上游发新版：`@agegr/pi-web` 目前仍停在 **0.14.2**（11-02 16:09 UTC 发布）。
 
 > 恢复上下文只需要读这一节 + 「缺陷修复记录」+ 最近一条 `git log`。
 
@@ -36,6 +39,8 @@
 | PATH 继承登录 shell（nvm/pnpm/mnemon 可用） | ✅ 已验证 | 缓存 7 天，`inherit_login_shell_path` 可关 |
 | 启动页 + 失败态（日志尾部/重试/打开日志） | ✅ 已验证 | |
 | 启动即检查更新（应用 + pi-web） | ✅ 已验证 | 每次启动都查；同一版本只提醒一次 |
+| 导出会话 HTML | ✅ 0.2.9 | 打补丁容忍 SDK 1.5.0 模板的 0 匹配（B2）；smoke 有断言（F18） |
+| 关于面板显示内置版本 | ✅ 0.2.9 | credits 里显示 pi-web / pi SDK / Node 版本（F15） |
 | L2 应用自更新（Tauri updater + minisign） | ✅ 真机闭环 | 进度窗 + 重启确认（0.2.3 起） |
 | L3 pi-web 热更新（只换 pi-web，不动 Node） | ✅ **真机闭环** | 0.2.5 上真实从 0.14.1 热更到 0.14.2；进度窗/回滚已实拍验证 |
 | 开源发布流水线（ci / release workflow） | ✅ 绿 | macOS arm64；Windows job 未加 |
@@ -64,27 +69,26 @@
   `MenuItemBuilder::with_id("check_update", "检查更新…")`，复用现有 `manual_check_all`。
 - **状态**：App 菜单第二项即「检查更新…」；「Pi Web」菜单里也保留入口。
 
-#### F15. 「关于」里显示 pi-web 版本（2026-11-03 记录）
+#### F15. 「关于」里显示 pi-web 版本 —— ✅ 0.2.9 完成（2026-11-03 记录）
 
-- **现状**：菜单 `Pi Web Desktop → 关于` 只有 App 名称 + 版本（`menu.rs` 里的 `AboutMetadata { name, version }`），看不到它内置的 pi-web / pi SDK / Node 版本，排障时要翻日志或看文件。
+- **现状**：菜单 `Pi Web Desktop → 关于` 只有 App 名称 + 版本，看不到它内置的 pi-web / pi SDK / Node 版本，排障时要翻日志或看文件。
 - **目标**：关于面板里显示 **`Pi Web Desktop 0.2.x` / `pi-web 0.14.x` / `pi SDK 1.5.x` / `Node 22.23.x`**。
-- **落点**：`src-tauri/src/menu.rs` 的 `AboutMetadata` 加 `credits: Some("内置 pi-web 0.14.2 · pi SDK 1.5.0 · Node 22.23.4")`（macOS 上 `comments`/`authors` 不支持，`credits` 支持）；数据直接复用 `crate::update::bundled_versions(app)`。
-- **备选**：自定义「关于」窗口（本地页面 `ui/about.html`），能放更多信息（版本列表 + GitHub/日志/配置文件链接），但要新增页面与窗口。
-- **验收**：关于面板能看到四个版本号。
+- **实现**（0.2.9）：`menu.rs` 的 `AboutMetadata` 加 `credits`，内容由 `about_credits(&crate::update::bundled_versions(app))` 生成 →「内置 pi-web 0.14.2 · pi SDK 1.5.0 · Node 22.23.4」；读不到时降级成 `?`，全读不到则提示「内置版本信息读取失败（见日志）」。三个单元测试覆盖。
+- **验收**：关于面板能看到四个版本号（App 版本由系统字段显示，其余三个在 credits 里）。
 
 #### F16. 菜单栏图标 + 相关菜单（2026-11-03 记录）
 
 - **现状**：只有 Dock 图标，没有菜单栏（状态栏）图标；关窗即退出。
-- **目标**：菜单栏常驻小图标，点击弹出菜单：显示/隐藏主窗口 · 在浏览器中打开 · 检查更新… · 更新 pi-web… · 打开日志目录 · 退出；图标用模板图（`icon_as_template(true)`）以适配深浅色菜单栏。
+- **目标**：菜单栏常驻小图标，点击弹出菜单：显示/隐藏主窗口 · 在浏览器中打开 · 检查应用更新… · 更新 pi-web… · 打开日志目录 · 退出；图标用模板图（`icon_as_template(true)`）以适配深浅色菜单栏。
 - **落点**：`src-tauri/Cargo.toml` 给 tauri 加 `tray-icon` feature；`main.rs` 用 `TrayIconBuilder` + 复用 `menu.rs` 里已有的动作函数；图标复用 `icons/32x32.png`（或做一张 18×18 模板图）。
-- **需要先定**：关窗行为是否改成「隐藏到菜单栏、不退出」（现在 `RunEvent::ExitRequested` 直接停侧车退出，pi-web 有后台任务时可能要保留）。
-- **验收**：菜单栏出现图标；点击能显示/隐藏窗口；菜单项与主菜单行为一致；退出时侧车被清理。
+- **关窗行为（2026-11-03 用户已定：B）**：改成「关窗隐藏到菜单栏、不退出」，pi-web 的后台任务不被中断；只有托盘/菜单里点「退出 Pi Web Desktop」才真正停侧车退出。
+  - 实现要点：`RunEvent::ExitRequested` 里区分「用户退出」与「关窗隐藏」；窗口 `CloseRequested` 改为 hide，并把 App 的 activation policy 保持在 `Regular`（Dock 图标保留）或按需切换。
+- **验收**：菜单栏出现图标；点击能显示/隐藏窗口；菜单项与主菜单行为一致；点「退出」时侧车被清理、无残留 node 进程。
 
-#### F17. 菜单文案区分「应用更新」与「pi-web 更新」（2026-11-03 记录）
+#### F17. 菜单文案区分「应用更新」与「pi-web 更新」 —— ✅ 0.2.9 完成（2026-11-03 记录）
 
 - **现状**：菜单里有「检查更新…」和「更新 pi-web…」，用户容易混淆（"检查更新"其实会先查 App、跳过 App 更新后再查 pi-web）。
-- **目标**：改成「检查应用更新…」+「更新 pi-web…」，或在「检查更新…」的弹窗里先说明"将检查 App 与 pi-web 两项"。
-- **落点**：`src-tauri/src/menu.rs`（文案）与 `update.rs`（弹窗首句）。
+- **实现**（0.2.9）：菜单项改名为 **「检查应用更新…」**（App 菜单 + Pi Web 菜单两处）；应用更新弹窗标题改「检查应用更新」并在正文说明"这里只处理应用本身；跳过或已是最新时会继续检查 pi-web 更新"；pi-web 检查结果弹窗标题改「检查 pi-web 更新」；pi-web 有新版的提示文案改为指向菜单「Pi Web → 更新 pi-web…」。
 
 ### 缺陷修复记录
 
@@ -98,23 +102,38 @@
 - **修复**（0.2.8）：`new_window_for()` 增加 `window_features(features)`，`on_new_window` 把 WebKit 传来的 `features` 透传。同一路径也覆盖「会话 ⋯ → 新标签页打开」。
 - **待用户复验**：0.2.8 上点「完整历史」与「新标签页打开会话」都应正常开新窗口。
 
-#### B2. 导出会话 HTML 报错 `Failed to patch exported HTML: sortChildren expected 1 match, found 0` —— 🟡 已定位，暂不修（2026-11-03 记录）
+#### B2. 导出会话 HTML 报错 `Failed to patch exported HTML: sortChildren expected 1 match, found 0` —— ✅ 0.2.9 修复（方案 B）
 
 - **现象**：会话「导出」打开的窗口里显示 JSON 错误（`?inline=1` 返回错误 JSON，不是 HTML）。
 - **注**：新窗口本身正常打开了 —— 说明 0.2.8 的崩溃修复生效（B1），这是服务端返回的内容问题。
 - **根因（上游版本组合不兼容，与本壳无关）**：
   1. pi-web 0.14.2 的导出路由（`.next/server/app/api/sessions/[id]/export/route.js`）在生成 HTML 后做**字符串替换补丁**：把 `sortChildren` / `mapNodes` / `markActive` 三个递归函数替换成迭代版本（防深会话爆栈）。每个补丁要求**恰好 1 处匹配**，0 处就 `throw`。
   2. 内置 **pi SDK 1.5.0** 的 `dist/core/export-html/template.js` 已经没有这三个函数（改成迭代遍历，`stack` 出现 19 次）。
-  3. 于是补丁匹配 0 处 → 抛出该错误。对照：用户 npx 那套 **pi-web 0.14.1 + SDK 1.4.0** 的 template.js 里三个函数都在（各 3 处），所以导出正常。
+  3. 于是补丁匹配 0 处 → 抛出该错误。对照：`pi-web 0.14.1 + SDK 1.4.0` 的 template.js 里三个函数都在（各 3 处），所以导出正常。
 - **影响**：仅「导出 HTML」；其它功能正常。
-- **候选方案（待定，按用户要求暂不发版）**：
-  - **A. 内置降级到 pi-web 0.14.1 / pi SDK 1.4.0**（导出恢复，最稳；丢 0.14.2 的更新）
-  - **B. 在 `fetch-sidecar` 阶段给 export 路由打补丁**：把"必须 1 处匹配"改成"0 处跳过、>1 才报错"（SDK 1.5.0 模板已是迭代实现，跳过即正确）。同类做法已有先例（`patch-pi-web-collapse.mjs`）
-  - **C. 等上游修**（pi-web 0.14.3 / SDK 1.5.1 大概率跟进），期间把内置钉在可用组合
-  - **D. 临时绕过**：命令行 `pi --export <session.jsonl> out.html`（不经过 pi-web 的补丁）
-- **跟进**：smoke 目前只查 `/` 与 `/api/sessions`；建议加一条「导出接口返回 HTML」的断言，这类上游不兼容就能在发版前发现（记为 F18）。
+- **方案对比**（2026-11-03 用户拍板走 **B**）：
+  - **A. 内置降级到 pi-web 0.14.1 / pi SDK 1.4.0**（导出恢复，最稳；丢 0.14.2 的更新）→ 未采用：会原地踏步，升级时同一个坑还在。
+  - **B. 打补丁「0 处跳过、>1 才报错」**（采用）→ SDK 1.5.0 模板已是迭代实现，跳过即正确。
+  - **C. 等上游修** → 至今不成立：`@agegr/pi-web` 最新仍 0.14.2（11-02 16:09 UTC）。
+  - **D. 临时绕过**：命令行 `pi --export <session.jsonl> out.html`（不经过 pi-web 的补丁）。
+- **实现**（0.2.9）：新增 `scripts/patch-pi-web-export.mjs`，把导出路由里的
+  `if(1!==g)throw Error("Failed to patch exported HTML: …")` 改成 `if(g>1)throw Error(…)`：
+  0 匹配时 `a.replace(e,f)` 天然是 no-op，>1 匹配（锚点不唯一）仍然报错。脚本特性：幂等（已打过就跳过）、
+  `--check` 试运行、锚点对不上/锚点出现多次/替换后仍残留原始断言都**报错退出**（不静默打出坏包）；
+  上游若整体移除这套字符串补丁则判定「无需处理」。由 `fetch-sidecar.mjs` 在安装后与「跳过前校验」两处调用，
+  和 `patch-pi-web-collapse.mjs` 一起受 `--no-patch` 控制；CI 的 `npm run sidecar` 也会带上。
+- **验证**：F18 的冒烟断言「导出接口返回 HTML」—— 打补丁前 500（`sortChildren expected 1 match, found 0`），
+  打补丁后 200 + `text/html`（278.9 KB）。注意：补丁只对**新构建的 App / 新侧车**生效，已装的 0.2.8 要升级到 0.2.9 才修好。
 
 ### P1 — 功能验收与平台
+
+#### F18. smoke 加导出接口断言 —— ✅ 0.2.9 完成
+
+- **为什么**：冒烟测试之前只查 `GET /` 与 `/api/sessions`，于是「首页正常、导出接口 500」（B2）一路混到了发布版本里。这类"某个接口坏了"应当在发版前可见。
+- **做法**（0.2.9）：`scripts/smoke.mjs` 在临时 `PI_CODING_AGENT_DIR` 下写一个最小会话（`sessions/<project>/<ts>_<id>.jsonl`，首行 `type=session` v3 + 两条 message），然后：
+  1. 断言 `/api/sessions` 里能看到这个 fixture 会话；
+  2. `GET /api/sessions/<id>/export?inline=1` 必须 **200 + `text/html` + 以 `<!doctype html` 开头**。
+- **验证**：打补丁前该断言红（`HTTP 500 {"error":"Failed to patch exported HTML: sortChildren expected 1 match, found 0"}`）；打补丁后绿（`278.9 KB`）。不依赖用户真实 `~/.pi` 数据，CI 里同样可跑。
 
 #### F3. 功能手测清单（决定能不能日常用）
 
@@ -149,6 +168,7 @@
 
 | 版本 | 内容 |
 |---|---|
+| 0.2.9 | 修 B2 导出 HTML（补丁容忍 SDK 模板 0 匹配）+ F18 smoke 导出断言 + F15 关于面板显示内置版本 + F17 菜单文案改「检查应用更新…」 |
 | 0.2.8 | 修复点击「完整历史」崩溃（新窗口必须沿用发起方 webview configuration） |
 | 0.2.6 | **已撤回**（把 pi-web 0.14.2 打进包，消耗掉当时的 L3 验证场景；内容并入 0.2.7） |
 | 0.2.7 | L3 热更新进度窗（与 L2 一致）；「更新 pi-web…」独立入口；每次启动都检查更新（同版本只提醒一次）；「关于」下方加检查更新；内置 pi-web 0.14.2 / pi SDK 1.5.0 |

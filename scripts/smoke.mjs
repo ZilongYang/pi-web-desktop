@@ -3,7 +3,7 @@
  * smoke.mjs -- 侧车冒烟测试（每个平台 CI 都跑，裁剪后必须复跑）。
  *
  *   1. 用 sidecar/runtime/node 起 sidecar/app/bin/pi-web.js（临时 agent 目录，不碰 ~/.pi）
- *   2. 等 GET / 与 /api/sessions 正常
+ *   2. 等 GET / 与 /api/sessions 正常；再测导出接口（?inline=1）返回 HTML（F18）
  *   3. SIGTERM 收尾，断言：端口释放 / 进程树全灭 / run record 已删
  *
  * 退出码 0 = 通过。
@@ -88,6 +88,43 @@ async function main() {
   const port = await freePort();
   const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "piweb-smoke-agent-"));
   const runDir = path.join(agentDir, "pi-web-run");
+  // 造一个最小会话：导出接口（F18）要有 id 才能测。布局见 pi CLI：
+  //   <agent>/sessions/<project>/<timestamp>_<sessionId>.jsonl，首行是 session 头。
+  const FIXTURE_ID = "smoke-fixture-session";
+  const fixtureDir = path.join(agentDir, "sessions", "--smoke-fixture--");
+  fs.mkdirSync(fixtureDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(fixtureDir, `2026-01-01T00-00-00-000Z_${FIXTURE_ID}.jsonl`),
+    [
+      {
+        type: "session",
+        version: 3,
+        id: FIXTURE_ID,
+        timestamp: "2026-01-01T00:00:00.000Z",
+        cwd: agentDir,
+      },
+      {
+        type: "message",
+        id: "smoke-user-1",
+        parentId: null,
+        timestamp: "2026-01-01T00:00:01.000Z",
+        message: { role: "user", content: "smoke fixture: hello" },
+      },
+      {
+        type: "message",
+        id: "smoke-assistant-1",
+        parentId: "smoke-user-1",
+        timestamp: "2026-01-01T00:00:02.000Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "smoke fixture: hi" }],
+          stopReason: "stop",
+        },
+      },
+    ]
+      .map((entry) => JSON.stringify(entry))
+      .join("\n") + "\n",
+  );
   console.log(`  端口 ${port}，临时 agent 目录 ${agentDir}`);
 
   const child = spawn(NODE_BIN, [ENTRY, "--no-open", "-p", String(port), "-H", "127.0.0.1"], {
@@ -132,10 +169,33 @@ async function main() {
     const sessionsStatus = await httpStatus(port, "/api/sessions");
     if (sessionsStatus === 200) {
       const body = await (await fetch(`http://127.0.0.1:${port}/api/sessions`)).json();
-      if (Array.isArray(body.sessions)) ok(`GET /api/sessions 正常（${body.sessions.length} 个会话）`);
-      else bad("/api/sessions 返回结构不对");
+      if (Array.isArray(body.sessions)) {
+        ok(`GET /api/sessions 正常（${body.sessions.length} 个会话）`);
+        if (!body.sessions.some((session) => session.id === FIXTURE_ID)) {
+          bad(`会话列表里没有 fixture 会话 ${FIXTURE_ID}（导出断言无法进行）`);
+        }
+      } else bad("/api/sessions 返回结构不对");
     } else {
       bad(`GET /api/sessions -> HTTP ${sessionsStatus}`);
+    }
+
+    // 导出接口（F18）：pi-web 生成 HTML 后会用字符串替换去 patch SDK 模板里的
+    // sortChildren / mapNodes / markActive 三个递归函数，要求「恰好 1 处匹配」。
+    // 一旦内置的 pi-web 与 pi SDK 版本组合对不上，首页正常但这个接口 500（B2）。
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${port}/api/sessions/${FIXTURE_ID}/export?inline=1`,
+        { signal: AbortSignal.timeout(60_000) },
+      );
+      const text = await res.text();
+      const type = res.headers.get("content-type") ?? "";
+      if (res.status === 200 && type.includes("text/html") && /<!doctype html/i.test(text)) {
+        ok(`GET /api/sessions/<id>/export -> HTML（${(text.length / 1024).toFixed(1)} KB）`);
+      } else {
+        bad(`导出接口异常：HTTP ${res.status} ${type} ${text.slice(0, 200)}`);
+      }
+    } catch (error) {
+      bad(`导出接口请求失败：${error.message}`);
     }
 
     // 2. run record 已写

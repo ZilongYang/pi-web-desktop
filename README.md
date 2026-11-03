@@ -56,7 +56,7 @@ cargo build                 # 调试构建
 
 | 壳版本 | 内置 pi-web | 内置 Node |
 |---|---|---|
-| 0.2.8 | 0.14.2 | 22.23.4 |
+| 0.2.9 | 0.14.2 | 22.23.4 |
 
 版本只在 `sidecar.json` 里改一处：改完 `npm run sidecar` 再重建即可。升级 pi-web 后**必须**跑一次 `npm run smoke`。
 

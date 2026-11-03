@@ -1,6 +1,6 @@
 [package]
 name = "pi-web-desktop"
-version = "0.2.8"
+version = "0.2.9"
 description = "Desktop shell for pi-web: bundles Node + the pi-web server, opens it in a native window"
 authors = ["zilong"]
 edition = "2021"

@@ -13,7 +13,7 @@
  *   node scripts/fetch-sidecar.mjs --force         # 强制重装
  *   node scripts/fetch-sidecar.mjs --target darwin-arm64
  *   node scripts/fetch-sidecar.mjs --no-prune      # 不裁剪（排查用）
- *   node scripts/fetch-sidecar.mjs --no-patch      # 不打「自定义消息默认折叠」补丁
+ *   node scripts/fetch-sidecar.mjs --no-patch      # 不打「默认折叠」「导出 HTML」两个补丁
  */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -23,6 +23,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pruneSidecar } from "./prune-sidecar.mjs";
 import { patchPiWebCollapse } from "./patch-pi-web-collapse.mjs";
+import { patchPiWebExport } from "./patch-pi-web-export.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SIDECAR = path.join(ROOT, "sidecar");
@@ -115,10 +116,23 @@ const uptodate =
 if (has("--if-missing") && uptodate && !has("--force")) {
   // 已装好也可能缺补丁（例如补丁脚本是后加的），先兜底对齐。
   if (fs.existsSync(path.join(APP_DIR, "node_modules", "@agegr", "pi-web", ".next"))) {
-    applyCollapsePatch("跳过前校验");
+    applyPatches("跳过前校验");
   }
   log(`已就绪，跳过：pi-web ${pins.piWebVersion} / node ${pins.nodeVersion} / ${target}`);
   process.exit(0);
+}
+
+/**
+ * 安装 pi-web 后要打的补丁，统一在这里调用（--no-patch 全部跳过）。
+ *
+ *  1. 自定义消息默认折叠（patch-pi-web-collapse.mjs）—— 纯 UI 偏好。
+ *  2. 导出 HTML 容忍 0 匹配（patch-pi-web-export.mjs）—— 修 B2：pi-web 0.14.2 的
+ *     导出路由要求模板里三个递归函数各命中 1 处，而 SDK 1.5.0 已改成迭代实现，
+ *     导致导出接口 500。
+ */
+function applyPatches(phase) {
+  applyCollapsePatch(phase);
+  applyExportPatch(phase);
 }
 
 /**
@@ -141,6 +155,33 @@ function applyCollapsePatch(phase) {
   } catch (error) {
     console.error(`[patch-collapse] ${phase}失败：${error.message}`);
     console.error("  修复 patch-pi-web-collapse.mjs 后重跑；或用 --no-patch 跳过（跳过时 UI 会保持默认展开）。");
+    process.exit(1);
+  }
+}
+
+/**
+ * 修 B2：pi-web 0.14.2 的导出路由用字符串替换把 SDK 模板里的
+ * sortChildren / mapNodes / markActive 换成迭代实现，且要求恰好 1 处匹配；
+ * 而 SDK 1.5.0 的模板已经是迭代实现（0 处匹配）-> 导出接口 500。
+ * 见 scripts/patch-pi-web-export.mjs。
+ */
+function applyExportPatch(phase) {
+  if (has("--no-patch")) {
+    log(`${phase}：--no-patch，跳过「导出 HTML 容忍 0 匹配」补丁`);
+    return;
+  }
+  try {
+    const result = patchPiWebExport({ appDir: APP_DIR });
+    if (result.patched) {
+      log(`${phase}：导出补丁已应用（${result.route}）`);
+    } else if (result.skipped) {
+      log(`${phase}：导出补丁无需处理（${result.route}）`);
+    } else {
+      log(`${phase}：导出补丁已在位`);
+    }
+  } catch (error) {
+    console.error(`[patch-export] ${phase}失败：${error.message}`);
+    console.error("  修复 patch-pi-web-export.mjs 后重跑；或用 --no-patch 跳过（跳过时导出接口仍会 500）。");
     process.exit(1);
   }
 }
@@ -236,8 +277,8 @@ if (!has("--no-prune")) {
   before = dirSize(SIDECAR);
 }
 
-// ---- 3.5 打「自定义消息默认折叠」补丁 --------------------------------------
-applyCollapsePatch("安装后");
+// ---- 3.5 打 pi-web 补丁（默认折叠 + 导出容忍 0 匹配） ----------------------
+applyPatches("安装后");
 
 // ---- 4. manifest ----------------------------------------------------------
 const nodeBin = path.join(RUNTIME_DIR, nodeBinName);

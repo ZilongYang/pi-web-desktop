@@ -86,6 +86,21 @@
 - [x] 修复：`new_window_for()` 加 `window_features(features)`，`on_new_window` 透传
 - [x] 发布 v0.2.8；待用户复验「完整历史」与「新标签页打开会话」
 
+## 0.2.9（B2 导出修复 + F18 + F15 + F17）
+
+- [x] **B2 走方案 B**：新增 `scripts/patch-pi-web-export.mjs`，把导出路由里的 `if(1!==g)throw …` 改成 `if(g>1)throw …`（0 匹配即跳过 —— SDK 1.5.0 模板已是迭代实现）；幂等 + `--check` + 锚点对不上就报错退出
+- [x] 接进 `scripts/fetch-sidecar.mjs`（安装后 + 跳过前校验两处，受 `--no-patch` 控制）→ CI 的 `npm run sidecar` 也会带上
+- [x] **F18**：`scripts/smoke.mjs` 写最小 fixture 会话，断言 `/api/sessions` 能看到它 + `export?inline=1` 返回 200 `text/html`
+- [x] **F15**：`menu.rs` 的 AboutMetadata 加 credits →「内置 pi-web 0.14.2 · pi SDK 1.5.0 · Node 22.23.4」（3 个单元测试）
+- [x] **F17**：菜单「检查更新…」→「检查应用更新…」；应用更新弹窗说明"这一步只处理应用本身"；pi-web 结果弹窗标题改「检查 pi-web 更新」
+- [x] 本地验证：patch 前 smoke 红（`HTTP 500 … sortChildren expected 1 match, found 0`）→ patch 后绿（导出 278.9 KB）；`cargo test` 12 项通过；`tauri build --bundles app` 成功
+- [x] 打包产物复验：在 `.app/Contents/Resources/pi-web` 上直接起侧车，导出接口 200 + `text/html`（285.5 KB）
+- [x] `make-dist.sh` 校验链全绿：签名 adhoc / 资源封印 `--verify --deep --strict` / arm64 / 版本 0.2.9 / 无调试 entitlement / 无构建者路径泄漏 / 侧车可执行位；zip 生成成功
+- [x] 产物二进制里核对 F15/F17 文案已编入（`内置 pi-web`、`检查应用更新` 等 UTF-8 字节）
+- [ ] 本地 dmg 未生成：受限沙箱里 `hdiutil` 挂载失败（OSStatus error 1），dmg 由 CI（macos-14）生成；非沙箱终端可跑 `npm run dist` 复验
+- [ ] 发布 v0.2.9（等用户按发版）
+- [ ] 用户真机复验：关于面板能看到三个内置版本号；菜单文案为「检查应用更新…」；pi-web 里点「导出」得到 HTML 而不是 JSON 错误
+
 ## 每次发版的固定动作
 
 ```bash

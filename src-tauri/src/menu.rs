@@ -19,9 +19,12 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     // App 菜单（macOS 上必须是第一项）
     #[cfg(target_os = "macos")]
     {
+        // F15：关于面板里直接显示内置 pi-web / SDK / Node 版本，排障不用翻日志。
+        let bundled = crate::update::bundled_versions(app);
         let about_metadata = AboutMetadata {
             name: Some("Pi Web Desktop".to_string()),
             version: Some(package.version.to_string()),
+            credits: Some(about_credits(&bundled)),
             copyright: None,
             authors: None,
             ..Default::default()
@@ -32,8 +35,8 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             true,
             &[
                 &PredefinedMenuItem::about(app, Some("关于 Pi Web Desktop"), Some(about_metadata))?,
-                // macOS 惯例：关于下面紧跟「检查更新…」
-                &MenuItemBuilder::with_id("check_update", "检查更新…").build(app)?,
+                // macOS 惯例：关于下面紧跟「检查应用更新…」
+                &MenuItemBuilder::with_id("check_update", "检查应用更新…").build(app)?,
                 &PredefinedMenuItem::separator(app)?,
                 &PredefinedMenuItem::services(app, Some("服务"))?,
                 &PredefinedMenuItem::separator(app)?,
@@ -120,7 +123,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let restart = MenuItemBuilder::with_id("restart", "重启服务")
         .accelerator("CmdOrCtrl+Shift+R")
         .build(app)?;
-    let check_update = MenuItemBuilder::with_id("check_update", "检查更新…").build(app)?;
+    let check_update = MenuItemBuilder::with_id("check_update", "检查应用更新…").build(app)?;
     let check_piweb = MenuItemBuilder::with_id("check_piweb_update", "更新 pi-web…").build(app)?;
     let open_browser = MenuItemBuilder::with_id("open_browser", "在浏览器中打开").build(app)?;
     let copy_url = MenuItemBuilder::with_id("copy_url", "复制服务地址").build(app)?;
@@ -153,6 +156,28 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     menu.append(&help_menu)?;
 
     Ok(menu)
+}
+
+/// 「关于」面板的说明区（F15）：显示内置 pi-web / pi SDK / Node 版本。
+/// macOS 的 About 面板只支持 credits 这一个自由文本字段，所以四个版本号压在这里。
+#[cfg(target_os = "macos")]
+fn about_credits(versions: &crate::update::BundledVersions) -> String {
+    let or_unknown = |value: &str| {
+        if value.is_empty() {
+            "?".to_string()
+        } else {
+            value.to_string()
+        }
+    };
+    if versions.pi_web.is_empty() && versions.pi_sdk.is_empty() && versions.node.is_empty() {
+        return "内置版本信息读取失败（见日志）。".to_string();
+    }
+    format!(
+        "内置 pi-web {} · pi SDK {} · Node {}",
+        or_unknown(&versions.pi_web),
+        or_unknown(&versions.pi_sdk),
+        or_unknown(&versions.node),
+    )
 }
 
 pub fn on_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
@@ -211,5 +236,47 @@ pub fn on_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
             );
         }
         _ => {}
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+
+    fn versions() -> crate::update::BundledVersions {
+        crate::update::BundledVersions {
+            app: "0.2.9".to_string(),
+            pi_web: "0.14.2".to_string(),
+            pi_sdk: "1.5.0".to_string(),
+            node: "22.23.4".to_string(),
+        }
+    }
+
+    /// F15 验收：关于面板要能看到四个版本号里的后三个。
+    #[test]
+    fn about_credits_lists_bundled_versions() {
+        assert_eq!(
+            about_credits(&versions()),
+            "内置 pi-web 0.14.2 · pi SDK 1.5.0 · Node 22.23.4"
+        );
+    }
+
+    #[test]
+    fn about_credits_degrades_to_question_marks() {
+        let partial = crate::update::BundledVersions {
+            pi_sdk: String::new(),
+            node: String::new(),
+            ..versions()
+        };
+        assert_eq!(about_credits(&partial), "内置 pi-web 0.14.2 · pi SDK ? · Node ?");
+    }
+
+    #[test]
+    fn about_credits_reports_total_failure() {
+        let empty = crate::update::BundledVersions {
+            app: "0.2.9".to_string(),
+            ..Default::default()
+        };
+        assert!(about_credits(&empty).contains("读取失败"));
     }
 }

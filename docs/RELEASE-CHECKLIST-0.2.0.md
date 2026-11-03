@@ -104,7 +104,7 @@
 - [x] **撤回原因**：用户升级后**双击启动即崩**（无窗口）。终端复现：
   `panicked at tauri-2.12.5/src/lib.rs:761: state() called before manage() for tauri_utils::Env`
   —— F15 在 `.menu(|app| ...)` 回调里读内置版本 → `app.path()`，而该回调早于 setup，path state 未初始化。见 ROADMAP B3。
-- [ ] 处置：v0.2.9 的 Release/tag 按 0.2.6 的先例撤回（删 Release + tag），修复随 0.2.10 发布
+- [x] 处置：v0.2.9 的 Release/tag 已按 0.2.6 先例撤回（`gh release delete --cleanup-tag`，本地/远端 tag 都已删）；修复随 0.2.10 发布
 
 ## 0.2.10（修 0.2.9 启动崩溃 + F19 窗口记忆 + 启动冒烟）
 
@@ -113,7 +113,9 @@
 - [x] **新增 App 启动冒烟** `scripts/smoke-app.mjs`（`npm run smoke:app`）：临时 `PIWEB_CONFIG_DIR` 隔离 + `PIWEB_WINDOW_PROBE=1` 探针，断言「退出码 0 / 无 panic / 有启动行 / 几何能落盘 / 预置几何能恢复」；**已接进 `release.yml`**（构建后、打包前）
 - [x] 本地真机验证：`npm run smoke:app` 通过（几何落盘 2560×1720 @ (1024,466) → 物理像素；预置 1000×680 @ (120,140) 恢复成功）
 - [x] `cargo test` 12 项通过；`tauri build --bundles app`（`APPLE_SIGNING_IDENTITY=-`）成功
-- [ ] 发布 v0.2.10 + 撤回 v0.2.9
+- [x] 发布 v0.2.10：release 流水线绿 —— 其中**「启动冒烟（App 真的能起来）」步骤真跑并通过**（新增的防线生效）
+- [x] 撤回 v0.2.9（Release + tag 全删）；`latest.json` 已指向 0.2.10（minisign 签名正常）
+- [x] 安装恢复：0.2.10 覆盖安装到 `/Applications`，`codesign --verify --deep --strict` 通过（`valid on disk` / `satisfies its Designated Requirement`），启动正常（`启动 Pi Web Desktop 0.2.10` + `服务就绪用时 1168ms`）
 - [ ] 用户真机复验：启动正常；拖动/缩放窗口后重启回到原位；关于面板三个内置版本号；菜单「检查应用更新…」；pi-web「导出」得到 HTML
 
 ## 每次发版的固定动作

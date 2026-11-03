@@ -9,8 +9,8 @@
 
 - 仓库：<https://github.com/ZilongYang/pi-web-desktop>（MIT）
 - ⚠️ **发布硬规则（2026-11-03 起）**：**必须真机启动验证过才允许发版**。`npm run smoke` 只测侧车，覆盖不到 App 的启动路径（菜单/窗口/配置）—— 0.2.9 就是 CI 全绿、用户双击即崩。发版前必须 `npm run smoke:app`（release.yml 已加这一步）。
-- 最新版本：**v0.2.10**（内置 pi-web 0.14.2 / pi SDK 1.5.0 / Node 22.23.4）—— 修 0.2.9 的启动崩溃 + 窗口位置/大小记忆
-  - **v0.2.9 已撤回**：启动即 panic（`state() called before manage() for tauri_utils::Env`），见 B3。
+- 最新版本：**v0.2.10**（内置 pi-web 0.14.2 / pi SDK 1.5.0 / Node 22.23.4）—— **已发布**（ci + release 双绿，含新加的启动冒烟）；本机已安装 0.2.10
+  - **v0.2.9 已撤回**（Release + tag 均已删除）：启动即 panic（`state() called before manage() for tauri_utils::Env`），见 B3。
   - v0.2.6 已撤回（它把 0.14.2 打进包，消耗掉当时的 L3 验证场景），其内容并入 0.2.7。
   - v0.2.8 修复「完整历史」崩溃（B1）。
   - v0.2.9 修 B2 导出 HTML（打补丁容忍 0 匹配）+ F18 冒烟断言 + F15 关于面板版本 + F17 菜单文案；**已撤回**（启动崩溃 B3）。
@@ -19,8 +19,9 @@
 
 ## 下次继续（2026-11-03 晚上）
 
-当前状态：**v0.2.10 已修复 0.2.9 的启动崩溃**（B3）；启动冒烟脚本 `scripts/smoke-app.mjs` 已加进 release.yml，以后这类"CI 绿但用户双击就崩"会被拦住。
-0.2.9 里除启动崩溃外的改动（B2 导出修复 / F18 / F15 / F17）在 0.2.10 里全部保留。
+当前状态：**v0.2.10 已发布并装在本机**；0.2.9 已撤回。启动冒烟（`npm run smoke:app`）已接进 release.yml 并且在 v0.2.10 的 release 里真跑过，
+以后这类"CI 绿但用户双击就崩"会被拦住。0.2.9 里除启动崩溃外的改动（B2 导出修复 / F18 / F15 / F17）在 0.2.10 全部保留。
+本机待真机复验：拖动/缩放窗口后重启是否回到原位置；关于面板三个内置版本号；菜单「检查应用更新…」；pi-web「导出」是否得到 HTML。
 
 1. **F16 菜单栏托盘** —— 关窗行为已定 **B（关窗隐藏到菜单栏，不退出）**：
    - `Cargo.toml` 给 tauri 加 `tray-icon` feature；`main.rs` 用 `TrayIconBuilder` + 复用 `menu.rs` 的动作函数；

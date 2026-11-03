@@ -148,8 +148,8 @@
 - [x] 由 `0.3.0-beta.2` 转正：版本号去掉 `-beta.2`（四处：package.json / package-lock.json / Cargo.toml / tauri.conf.json）
 - [x] 发版前三件套：`cargo test` 15 项通过、`npm run smoke` 通过、`npm run smoke:app` 通过（启动行 0.3.0 / 窗口几何存取）
 - [x] 构建 + ad-hoc 整包签名校验：`valid on disk` / `satisfies its Designated Requirement`
-- [ ] 发布 v0.3.0（非预发布 → 自动成为 Latest；`channel-beta` 清单保持指向 beta.2，beta 用户切回正式版即可升级）
-- [ ] 发布后核验：`releases/latest` = v0.3.0、《latest.json》version=0.3.0；本机安装 0.3.0 并切回正式版通道确认「应用已是最新」
+- [x] 发布 v0.3.0：CI 绿（ci 1m12s / release 8m59s）；Release 为 **Latest**（非预发布）
+- [x] 发布后核验：`releases/latest` = **v0.3.0**；`latest.json` version=0.3.0；`channel-beta` 仍指向 0.3.0-beta.2（符合设计）；本机安装 0.3.0、通道=正式版，启动日志 `应用已是最新`
 
 ## 每次发版的固定动作
 

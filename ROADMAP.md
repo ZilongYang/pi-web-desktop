@@ -1,13 +1,14 @@
 # Pi Web Desktop — 路线图 / Backlog
 
 > 这里是「现在到哪了、接下来做什么」。已批准方案的原文在 `docs/PLAN-*.md`（不修改，只在文末追加事后补记）；验收与发版记录在 `docs/` 下另外两份。
-> 文档索引见 [docs/README.md](docs/README.md)。
+> 文档索引见 [docs/README.md](docs/README.md)；**发版流程与版本号规则**见 [docs/RELEASE-PROCESS.md](docs/RELEASE-PROCESS.md)。
 
 ## 一句话
 
 把 [pi-web](https://github.com/agegr/pi-web)（Next.js 服务端 + 浏览器 UI）包成原生桌面 App：**自带 Node 运行时**，双击即用，与 `pi` CLI / 浏览器版共享 `~/.pi/agent`。
 
 - 仓库：<https://github.com/ZilongYang/pi-web-desktop>（MIT）
+- 版本号规则（2026-11-03 用户定）：**默认只递增 patch** —— `0.3.0` → `0.3.1-beta.1` → `0.3.1` → `0.3.2-beta.1` …，只有不兼容/重构才升 minor。详见 [docs/RELEASE-PROCESS.md](docs/RELEASE-PROCESS.md)。
 - ⚠️ **发布硬规则（2026-11-03 起）**：**必须真机启动验证过才允许发版**。`npm run smoke` 只测侧车，覆盖不到 App 的启动路径（菜单/窗口/配置）—— 0.2.9 就是 CI 全绿、用户双击即崩。发版前必须 `npm run smoke:app`（release.yml 已加这一步）。
 - 更新通道：**正式版 / 测试版 beta** 已实现（方案见 [docs/PLAN-2026-11-03-channels.md](docs/PLAN-2026-11-03-channels.md)）
 - 最新版本：**v0.2.11**（内置 pi-web 0.14.2 / pi SDK 1.5.0 / Node 22.23.4）—— 修 F20（输入框横向滚动条压字）+ 保留 0.2.10 的启动崩溃修复 / F19

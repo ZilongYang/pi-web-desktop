@@ -230,6 +230,12 @@ pub fn on_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
             }
         }
         "check_update" => crate::update::manual_check_all(app),
+        // 菜单栏托盘专有的菜单项（托盘菜单与主菜单共用同一个全局监听，见 tray.rs 的注释）
+        "tray_toggle" => crate::tray::toggle_main(app),
+        "tray_quit" => {
+            crate::logging::line("tray", "从菜单栏退出");
+            app.exit(0);
+        }
         "channel_stable" => {
             crate::update::switch_channel(app, crate::update::CHANNEL_STABLE);
             refresh_channels(app);

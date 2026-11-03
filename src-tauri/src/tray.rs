@@ -44,18 +44,10 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .tooltip("Pi Web Desktop")
         .menu(&menu)
         .show_menu_on_left_click(true)
-        .on_menu_event(|app, event| {
-            let id = event.id().as_ref().to_string();
-            match id.as_str() {
-                "tray_toggle" => toggle_main(app),
-                "tray_quit" => {
-                    crate::logging::line("tray", "从菜单栏退出");
-                    app.exit(0);
-                }
-                // 其余复用主菜单的动作（在浏览器打开 / 检查更新 / 更新 pi-web / 打开日志）
-                _ => crate::menu::on_event(app, event),
-            }
-        })
+        // 注意：这里**不要**再注册 on_menu_event。
+        // 托盘菜单的点击同样会走到 App 的全局菜单监听（Builder::on_menu_event），
+        // 两处都处理会对同一次点击执行两遍（0.3.1-beta.1 的 bug：检查更新弹两个窗）。
+        // 托盘专有的 id（tray_toggle / tray_quit）统一在 menu::on_event 里处理。
         .build(app)?;
     crate::logging::line("tray", "菜单栏托盘已创建");
     Ok(())

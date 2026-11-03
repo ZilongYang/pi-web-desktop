@@ -9,6 +9,7 @@
 
 - 仓库：<https://github.com/ZilongYang/pi-web-desktop>（MIT）
 - 版本号规则（2026-11-03 用户定）：**默认只递增 patch** —— `0.3.0` → `0.3.1-beta.1` → `0.3.1` → `0.3.2-beta.1` …，只有不兼容/重构才升 minor。详见 [docs/RELEASE-PROCESS.md](docs/RELEASE-PROCESS.md)。
+- ⚠️ **发布硬规则（2026-11-04 用户补充，最高优先级）**：**开发完先在本机构建并安装，交给子龙验证；他通过后才允许打 tag 发布**（beta 也一样，不许先发再验）。自动化测试只是前置条件，不能代替本机验收。
 - ⚠️ **发布硬规则（2026-11-03 起）**：**必须真机启动验证过才允许发版**。`npm run smoke` 只测侧车，覆盖不到 App 的启动路径（菜单/窗口/配置）—— 0.2.9 就是 CI 全绿、用户双击即崩。发版前必须 `npm run smoke:app`（release.yml 已加这一步）。
 - 更新通道：**正式版 / 测试版 beta** 已实现（方案见 [docs/PLAN-2026-11-03-channels.md](docs/PLAN-2026-11-03-channels.md)）
 - **正在测试的版本：v0.3.1-beta.1**（pre-release）：F16 菜单栏托盘 + 关窗隐藏、F14 L3 清单独立；本机已安装

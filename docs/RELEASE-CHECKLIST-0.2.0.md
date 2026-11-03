@@ -164,6 +164,14 @@
 - [ ] 真机手动确认：点关闭 → 窗口隐藏 App 不退出；托盘「显示/隐藏主窗口」「退出」；Dock 图标唤回
 - [x] 发布后确认：固定 Release `piweb-sidecar` 存在（Pre-release），含侧车包 + 清单，清单 URL 为 `releases/download/piweb-sidecar/...`；默认地址真机验证通过
 
+## 0.3.1-beta.2（修托盘菜单双触发）
+
+- [x] 现象：0.3.1-beta.1 上点「检查应用更新…」/「更新 pi-web…」会弹两个窗（日志同毫秒两条）
+- [x] 根因：托盘菜单也注册了 `TrayIconBuilder::on_menu_event`，而托盘菜单点击同时会走到 App 的全局菜单监听（`Builder::on_menu_event`）→ 同一个动作执行两遍
+- [x] 修复：`tray.rs` 不再注册托盘级监听；托盘专有 id（`tray_toggle` / `tray_quit`）统一在 `menu::on_event` 处理
+- [x] 真机复验：点击后日志只剩一条「手动检查更新」
+- [ ] 发布 v0.3.1-beta.2
+
 ## 每次发版的固定动作
 
 ```bash

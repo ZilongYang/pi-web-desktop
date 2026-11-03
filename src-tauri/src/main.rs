@@ -16,6 +16,7 @@ mod probe;
 mod progress;
 mod sidecar;
 mod update;
+mod window_state;
 mod zoom;
 
 use serde::Serialize;
@@ -605,7 +606,6 @@ fn main() {
             open_logs,
             open_in_browser
         ])
-        .menu(|app| menu::build(app))
         .on_menu_event(|app, event| menu::on_event(app, event))
         .setup(|app| {
             let handle = app.handle().clone();
@@ -624,6 +624,19 @@ fn main() {
                     std::env::consts::ARCH
                 ),
             );
+
+            // 菜单必须在 setup 里装，不能用 `.menu(|app| menu::build(app))`：
+            // 那个回调在 setup **之前**执行，此时 tauri_utils::Env（path 相关 state）还没
+            // manage()，任何 `app.path()` 都会 panic —— 0.2.9 启动崩溃就是这个原因
+            // （F15 的关于面板要读内置版本 → sidecar::resolve → app.path()）。
+            match menu::build(&handle) {
+                Ok(menu) => {
+                    if let Err(error) = app.set_menu(menu) {
+                        logging::line("app", &format!("安装菜单失败：{error}"));
+                    }
+                }
+                Err(error) => logging::line("app", &format!("构建菜单失败：{error}")),
+            }
 
             let window_config = app
                 .config()
@@ -675,6 +688,11 @@ fn main() {
                     }
                 })
                 .build()?;
+
+            // F19：恢复上次的位置/大小（在 show 之前，避免可见跳动），并挂上记忆钩子。
+            window_state::restore(&handle, &window);
+            window_state::watch(&handle, &window);
+
             let _ = window.show();
 
             // 恢复上次的页面缩放（菜单「视图 → 放大/缩小/实际大小」改的那个）
@@ -693,6 +711,18 @@ fn main() {
                     update::manual_check_all(&handle);
                 });
             }
+            // 窗口探针（scripts/smoke-app.mjs 用）：3 秒后打印几何、落盘、退出。
+            // 用来在没有 GUI 自动化权限的环境里验证「App 能启动 + 窗口几何存取」，常规启动不受影响。
+            if std::env::var("PIWEB_WINDOW_PROBE").ok().as_deref() == Some("1") {
+                let probe_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    if let Some(window) = probe_handle.get_webview_window("main") {
+                        window_state::probe_and_save(&probe_handle, &window);
+                    }
+                    probe_handle.exit(0);
+                });
+            }
             std::thread::spawn(move || run_launch(handle));
             Ok(())
         })
@@ -701,6 +731,10 @@ fn main() {
 
     app.run(|app, event| match event {
         RunEvent::ExitRequested { .. } | RunEvent::Exit => {
+            // 退出前把窗口几何落盘（关窗路径也存，这里兜住 ⌘Q / 菜单退出）
+            if let Some(window) = app.get_webview_window("main") {
+                window_state::save(app, &window, true);
+            }
             let state = app.state::<AppState>();
             let running = state.sidecar.lock().ok().and_then(|mut guard| guard.take());
             if let Some(running) = running {

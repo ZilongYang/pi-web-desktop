@@ -38,6 +38,7 @@ Pi Web Desktop.app
 npm install                 # 只装 @tauri-apps/cli
 npm run sidecar             # 装侧车：npm 包 + 官方 Node + 裁剪（约 400MB，首次要下载）
 npm run smoke               # 侧车冒烟测试：起服务 → 探活 → 收尾 → 断言无残留
+npm run smoke:app           # App 启动冒烟：真启动构建产物，断言不崩 + 窗口几何存取（发版前必跑）
 npm run dev                 # tauri dev（侧车缺失时会先自动下载）
 ```
 
@@ -56,7 +57,7 @@ cargo build                 # 调试构建
 
 | 壳版本 | 内置 pi-web | 内置 Node |
 |---|---|---|
-| 0.2.9 | 0.14.2 | 22.23.4 |
+| 0.2.10 | 0.14.2 | 22.23.4 |
 
 版本只在 `sidecar.json` 里改一处：改完 `npm run sidecar` 再重建即可。升级 pi-web 后**必须**跑一次 `npm run smoke`。
 

@@ -46,6 +46,9 @@ jobs:
           ./node_modules/.bin/tauri build --bundles app \
             --config '{"bundle":{"createUpdaterArtifacts":true}}'
 
+      - name: 启动冒烟（App 真的能起来，0.2.9 的教训）
+        run: node scripts/smoke-app.mjs
+
       - name: 打发布包（ad-hoc 签名 / dmg / 侧车包 / SHA256SUMS）
         run: bash scripts/make-dist.sh
 

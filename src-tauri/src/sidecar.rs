@@ -68,6 +68,18 @@ pub struct Config {
     /// 页面缩放档位（1.0 = 100%），由菜单「视图」维护
     #[serde(default = "default_zoom")]
     pub zoom: f64,
+    /// 主窗口上次的位置与大小（物理像素），由 `window_state` 在移动/缩放/关窗时维护
+    #[serde(default)]
+    pub window: Option<WindowGeometry>,
+}
+
+/// 主窗口几何（物理像素）：`x/y` 是窗口外框左上角，`width/height` 是内容区尺寸。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowGeometry {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
 }
 
 fn default_zoom() -> f64 {
@@ -95,11 +107,17 @@ impl Default for Config {
             pi_coding_agent_dir: None,
             inherit_login_shell_path: true,
             zoom: 1.0,
+            window: None,
         }
     }
 }
 
 fn config_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    // 测试/多配置用：PIWEB_CONFIG_DIR 指定配置目录。
+    // scripts/smoke-app.mjs 靠它隔离，验证启动/窗口几何时不碰用户真实配置。
+    if let Some(dir) = std::env::var_os("PIWEB_CONFIG_DIR") {
+        return Some(PathBuf::from(dir).join("config.json"));
+    }
     app.path().app_config_dir().ok().map(|d| d.join("config.json"))
 }
 

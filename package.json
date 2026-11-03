@@ -1,7 +1,7 @@
 {
   "name": "pi-web-desktop",
   "private": true,
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "Tauri 2 desktop shell for pi-web (bundles Node + pi-web, no prerequisites)",
   "type": "module",
   "scripts": {
@@ -12,7 +12,8 @@
     "build": "node scripts/fetch-sidecar.mjs --if-missing && tauri build",
     "tauri": "tauri",
     "dist": "bash scripts/make-dist.sh",
-    "signing-cert": "bash scripts/create-signing-cert.sh"
+    "signing-cert": "bash scripts/create-signing-cert.sh",
+    "smoke:app": "node scripts/smoke-app.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

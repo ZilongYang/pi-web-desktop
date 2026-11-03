@@ -8,16 +8,19 @@
 把 [pi-web](https://github.com/agegr/pi-web)（Next.js 服务端 + 浏览器 UI）包成原生桌面 App：**自带 Node 运行时**，双击即用，与 `pi` CLI / 浏览器版共享 `~/.pi/agent`。
 
 - 仓库：<https://github.com/ZilongYang/pi-web-desktop>（MIT）
-- 最新版本：**v0.2.9**（内置 pi-web 0.14.2 / pi SDK 1.5.0 / Node 22.23.4）—— **已发布**（CI 绿，latest.json 已指向 0.2.9）；本机仍是 0.2.8，用 App 内「检查应用更新…」即可升级
+- ⚠️ **发布硬规则（2026-11-03 起）**：**必须真机启动验证过才允许发版**。`npm run smoke` 只测侧车，覆盖不到 App 的启动路径（菜单/窗口/配置）—— 0.2.9 就是 CI 全绿、用户双击即崩。发版前必须 `npm run smoke:app`（release.yml 已加这一步）。
+- 最新版本：**v0.2.10**（内置 pi-web 0.14.2 / pi SDK 1.5.0 / Node 22.23.4）—— 修 0.2.9 的启动崩溃 + 窗口位置/大小记忆
+  - **v0.2.9 已撤回**：启动即 panic（`state() called before manage() for tauri_utils::Env`），见 B3。
   - v0.2.6 已撤回（它把 0.14.2 打进包，消耗掉当时的 L3 验证场景），其内容并入 0.2.7。
   - v0.2.8 修复「完整历史」崩溃（B1）。
-  - v0.2.9 修 B2 导出 HTML（打补丁容忍 0 匹配）+ F18 冒烟断言 + F15 关于面板版本 + F17 菜单文案。
+  - v0.2.9 修 B2 导出 HTML（打补丁容忍 0 匹配）+ F18 冒烟断言 + F15 关于面板版本 + F17 菜单文案；**已撤回**（启动崩溃 B3）。
+  - v0.2.10 修 B3（菜单改到 setup 里安装）+ F19 窗口位置/大小记忆 + 新增「App 启动冒烟」（`npm run smoke:app`）。
 - 平台：macOS 14+ arm64（Windows 代码路径已写、未验证；Linux 未验证）
 
 ## 下次继续（2026-11-03 晚上）
 
-当前状态：**v0.2.9 已发布**（ci 与 release 两条流水线都绿）；B2 已用方案 B 修掉，F18 让这类"首页正常但某接口 500"在发版前可见。
-本机待办：用 App 内「检查应用更新…」升到 0.2.9，并顺手复验关于面板（三个内置版本号）、菜单文案「检查应用更新…」、pi-web 里点「导出」拿到 HTML。
+当前状态：**v0.2.10 已修复 0.2.9 的启动崩溃**（B3）；启动冒烟脚本 `scripts/smoke-app.mjs` 已加进 release.yml，以后这类"CI 绿但用户双击就崩"会被拦住。
+0.2.9 里除启动崩溃外的改动（B2 导出修复 / F18 / F15 / F17）在 0.2.10 里全部保留。
 
 1. **F16 菜单栏托盘** —— 关窗行为已定 **B（关窗隐藏到菜单栏，不退出）**：
    - `Cargo.toml` 给 tauri 加 `tray-icon` feature；`main.rs` 用 `TrayIconBuilder` + 复用 `menu.rs` 的动作函数；
@@ -42,6 +45,8 @@
 | 启动即检查更新（应用 + pi-web） | ✅ 已验证 | 每次启动都查；同一版本只提醒一次 |
 | 导出会话 HTML | ✅ 0.2.9 | 打补丁容忍 SDK 1.5.0 模板的 0 匹配（B2）；smoke 有断言（F18） |
 | 关于面板显示内置版本 | ✅ 0.2.9 | credits 里显示 pi-web / pi SDK / Node 版本（F15） |
+| 窗口位置/大小记忆 | ✅ 0.2.10 | 物理像素存 `config.json`；拔屏后自动居中（F19） |
+| App 启动冒烟 | ✅ 0.2.10 | `npm run smoke:app`：真启动构建产物，断言不崩、几何存取；已接进 release.yml |
 | L2 应用自更新（Tauri updater + minisign） | ✅ 真机闭环 | 进度窗 + 重启确认（0.2.3 起） |
 | L3 pi-web 热更新（只换 pi-web，不动 Node） | ✅ **真机闭环** | 0.2.5 上真实从 0.14.1 热更到 0.14.2；进度窗/回滚已实拍验证 |
 | 开源发布流水线（ci / release workflow） | ✅ 绿 | macOS arm64；Windows job 未加 |
@@ -102,6 +107,30 @@
 - **根因**：pi-web 的「完整历史」用 `window.open` 开新窗口，走到我们的 `on_new_window`；我们创建新窗口时**没有沿用发起方 webview 的 configuration**。Tauri 文档明确：macOS 上 `NewWindowResponse::Create` 的 webview 必须与调用方使用同一 configuration（`WindowFeatures.webview_configuration`），否则 WebKit 直接抛 NSException，进程 abort。
 - **修复**（0.2.8）：`new_window_for()` 增加 `window_features(features)`，`on_new_window` 把 WebKit 传来的 `features` 透传。同一路径也覆盖「会话 ⋯ → 新标签页打开」。
 - **待用户复验**：0.2.8 上点「完整历史」与「新标签页打开会话」都应正常开新窗口。
+
+#### B3. 0.2.9 启动即崩（`state() called before manage() for tauri_utils::Env`）—— ✅ 0.2.10 修复
+
+- **现象**：升级到 0.2.9 后双击启动立刻退出，窗口都不出现。
+- **证据**：终端直接跑 `/Applications/Pi Web Desktop.app/Contents/MacOS/pi-web-desktop`：
+  `thread 'main' panicked at tauri-2.12.5/src/lib.rs:761: state() called before manage() for tauri_utils::Env`
+- **根因（本壳的回归，与上游无关）**：F15 让「关于」面板显示内置版本 → `bundled_versions()` → `sidecar::resolve()` → `app.path()`；
+  而菜单当时是通过 `.menu(|app| menu::build(app))` 注册的，这个回调在 **setup 之前**执行，那时 `tauri_utils::Env`（path 相关 state）
+  还没 `manage()`，任何 `app.path()` 都会 panic。
+- **修复**（0.2.10）：删掉 `.menu(...)`，改在 `setup()` 里 `app.set_menu(menu::build(&handle)?)`，并在代码里写明「菜单必须在 setup 里装，不能用 Builder::menu」。
+- **为什么没被测试拦住（教训）**：CI 只跑侧车冒烟（`npm run smoke`），App 的启动路径完全没覆盖；当时拿"构建成功 + 二进制里有新字符串"当验证，
+  从没真正启动过一次 App。→ 0.2.10 新增 `scripts/smoke-app.mjs`：用临时 `PIWEB_CONFIG_DIR` 真启动构建产物，断言退出码 0、无 `panicked at`、
+  有启动行、窗口几何能落盘/能恢复；已接进 `release.yml`。**发布硬规则见文首。**
+- **撤回**：v0.2.9 一并撤回（Release/tag 处理方式同 0.2.6）。
+
+#### F19. 记住窗口上次的位置和大小 —— ✅ 0.2.10 完成
+
+- **目标**：关掉再打开，窗口回到上次的位置与大小。
+- **实现**：`config.json` 新增 `window: {x, y, width, height}`（**物理像素**，逻辑坐标跨 Retina 显示器不唯一）；
+  `src-tauri/src/window_state.rs` 在 `Moved`/`Resized`（800ms 节流写盘）以及 `CloseRequested`/退出（⌘Q、菜单退出）时保存；
+  启动时在 `show()` 之前恢复，并做**可见性校验**（窗口不在任何屏幕内 → 改为居中，防止拔掉外接屏后窗口消失）；
+  最大化/全屏时不覆盖普通态几何。
+- **验收**：`npm run smoke:app` 两轮断言 —— ①全新配置启动后 `config.json` 里有有效几何；②预置 `1000×680 @ (120,140)` 后，
+  启动日志出现「恢复窗口 1000×680 @ (120, 140)」。
 
 #### B2. 导出会话 HTML 报错 `Failed to patch exported HTML: sortChildren expected 1 match, found 0` —— ✅ 0.2.9 修复（方案 B）
 
@@ -169,7 +198,8 @@
 
 | 版本 | 内容 |
 |---|---|
-| 0.2.9 | 修 B2 导出 HTML（补丁容忍 SDK 模板 0 匹配）+ F18 smoke 导出断言 + F15 关于面板显示内置版本 + F17 菜单文案改「检查应用更新…」 |
+| 0.2.10 | 修 B3 启动崩溃（菜单改到 setup 里安装）+ F19 窗口位置/大小记忆 + 新增 `npm run smoke:app` 启动冒烟并接进发版流水线 |
+| 0.2.9 | **已撤回**（启动崩溃 B3）；内容（B2/F18/F15/F17）保留在 0.2.10 |
 | 0.2.8 | 修复点击「完整历史」崩溃（新窗口必须沿用发起方 webview configuration） |
 | 0.2.6 | **已撤回**（把 pi-web 0.14.2 打进包，消耗掉当时的 L3 验证场景；内容并入 0.2.7） |
 | 0.2.7 | L3 热更新进度窗（与 L2 一致）；「更新 pi-web…」独立入口；每次启动都检查更新（同版本只提醒一次）；「关于」下方加检查更新；内置 pi-web 0.14.2 / pi SDK 1.5.0 |

@@ -86,7 +86,7 @@
 - [x] 修复：`new_window_for()` 加 `window_features(features)`，`on_new_window` 透传
 - [x] 发布 v0.2.8；待用户复验「完整历史」与「新标签页打开会话」
 
-## 0.2.9（B2 导出修复 + F18 + F15 + F17）
+## 0.2.9（B2 导出修复 + F18 + F15 + F17）—— ⚠️ 已撤回（启动崩溃）
 
 - [x] **B2 走方案 B**：新增 `scripts/patch-pi-web-export.mjs`，把导出路由里的 `if(1!==g)throw …` 改成 `if(g>1)throw …`（0 匹配即跳过 —— SDK 1.5.0 模板已是迭代实现）；幂等 + `--check` + 锚点对不上就报错退出
 - [x] 接进 `scripts/fetch-sidecar.mjs`（安装后 + 跳过前校验两处，受 `--no-patch` 控制）→ CI 的 `npm run sidecar` 也会带上
@@ -101,6 +101,20 @@
 - [x] 发布 v0.2.9：`git tag v0.2.9` + push → ci 绿（含新的导出断言）、release 绿（构建 + dmg + updater 包 + Release 资产齐全）
 - [x] 发布侧核验：`latest.json` 版本 0.2.9 + minisign 签名；`SHA256SUMS` 四件套齐全；`piweb-sidecar.json` 指向 0.14.2 侧车包（同版本，L3 不会误弹）
 - [ ] 用户真机复验：关于面板能看到三个内置版本号；菜单文案为「检查应用更新…」；pi-web 里点「导出」得到 HTML 而不是 JSON 错误
+- [x] **撤回原因**：用户升级后**双击启动即崩**（无窗口）。终端复现：
+  `panicked at tauri-2.12.5/src/lib.rs:761: state() called before manage() for tauri_utils::Env`
+  —— F15 在 `.menu(|app| ...)` 回调里读内置版本 → `app.path()`，而该回调早于 setup，path state 未初始化。见 ROADMAP B3。
+- [ ] 处置：v0.2.9 的 Release/tag 按 0.2.6 的先例撤回（删 Release + tag），修复随 0.2.10 发布
+
+## 0.2.10（修 0.2.9 启动崩溃 + F19 窗口记忆 + 启动冒烟）
+
+- [x] **B3 修复**：删掉 `Builder::menu(|app| …)`，改在 `setup()` 里 `app.set_menu(menu::build(&handle)?)`（并注释写明原因）
+- [x] **F19**：`config.json` 新增 `window {x,y,width,height}`（物理像素）；`window_state.rs` 在移动/缩放（800ms 节流）与关窗/退出时保存，启动时 show 前恢复；拔屏/换屏后不在任何显示器内 → 居中；最大化/全屏不覆盖普通态
+- [x] **新增 App 启动冒烟** `scripts/smoke-app.mjs`（`npm run smoke:app`）：临时 `PIWEB_CONFIG_DIR` 隔离 + `PIWEB_WINDOW_PROBE=1` 探针，断言「退出码 0 / 无 panic / 有启动行 / 几何能落盘 / 预置几何能恢复」；**已接进 `release.yml`**（构建后、打包前）
+- [x] 本地真机验证：`npm run smoke:app` 通过（几何落盘 2560×1720 @ (1024,466) → 物理像素；预置 1000×680 @ (120,140) 恢复成功）
+- [x] `cargo test` 12 项通过；`tauri build --bundles app`（`APPLE_SIGNING_IDENTITY=-`）成功
+- [ ] 发布 v0.2.10 + 撤回 v0.2.9
+- [ ] 用户真机复验：启动正常；拖动/缩放窗口后重启回到原位；关于面板三个内置版本号；菜单「检查应用更新…」；pi-web「导出」得到 HTML
 
 ## 每次发版的固定动作
 

@@ -386,7 +386,15 @@ fn build_updater(
     app: &tauri::AppHandle,
     allow_any_version: bool,
 ) -> Result<tauri_plugin_updater::Updater, String> {
-    let channel = current_channel(app);
+    build_updater_for(app, current_channel(app), allow_any_version)
+}
+
+/// 按**指定**通道构造 updater（探针用；正常流程走 `build_updater` 读 config）。
+fn build_updater_for(
+    app: &tauri::AppHandle,
+    channel: &str,
+    allow_any_version: bool,
+) -> Result<tauri_plugin_updater::Updater, String> {
     let mut builder = app.updater_builder();
     if let Some(endpoint) = endpoint_for(channel) {
         let url: tauri::Url = endpoint.parse().map_err(|error| format!("{error}"))?;
@@ -424,7 +432,7 @@ pub fn probe_channel(app: &tauri::AppHandle) {
         "update-probe",
         &format!("通道={label} 清单={:?} 允许降级={allow_any}", endpoint_for(channel)),
     );
-    let result = build_updater(app, allow_any).and_then(|updater| {
+    let result = build_updater_for(app, channel, allow_any).and_then(|updater| {
         tauri::async_runtime::block_on(async { updater.check().await.map_err(|e| e.to_string()) })
     });
     match result {

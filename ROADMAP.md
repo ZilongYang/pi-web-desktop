@@ -52,7 +52,7 @@
 | 关于面板显示内置版本 | ✅ 0.2.9 | credits 里显示 pi-web / pi SDK / Node 版本（F15） |
 | 窗口位置/大小记忆 | ✅ 0.2.10 | 物理像素存 `config.json`；拔屏后自动居中（F19） |
 | 缩放下的输入框显示 | ✅ 0.2.11 | 注入 CSS 关掉 textarea 横向滚动条（F20，WebKit placeholder 不换行导致） |
-| 更新通道（正式 / beta） | 🟡 已实现，待发 beta 验证 | 菜单「更新通道」；正式版读 `releases/latest`，beta 读固定 `channel-beta` 清单；允许降级重装 |
+| 更新通道（正式 / beta） | ✅ 已验证 | 菜单「Pi Web → 更新通道」；正式版读 `releases/latest`，beta 读固定 `channel-beta` 清单；允许降级重装 |
 | App 启动冒烟 | ✅ 0.2.10 | `npm run smoke:app`：真启动构建产物，断言不崩、几何存取；已接进 release.yml |
 | L2 应用自更新（Tauri updater + minisign） | ✅ 真机闭环 | 进度窗 + 重启确认（0.2.3 起） |
 | L3 pi-web 热更新（只换 pi-web，不动 Node） | ✅ **真机闭环** | 0.2.5 上真实从 0.14.1 热更到 0.14.2；进度窗/回滚已实拍验证 |
@@ -223,6 +223,7 @@
 
 | 版本 | 内容 |
 |---|---|
+| 0.3.0-beta.2 | 验证版（同 beta.1，用于验证 beta 通道升级链路） |
 | 0.3.0-beta.1 | 更新通道（正式版 / 测试版 beta）：菜单可切换、按通道取清单、允许降级重装；CI 支持 beta（pre-release + 固定 `channel-beta` 清单） |
 | 0.2.11 | 修 F20：缩放/窄窗口下输入框横向滚动条压住文字（注入 CSS 关闭 textarea 横向滚动） |
 | 0.2.10 | 修 B3 启动崩溃（菜单改到 setup 里安装）+ F19 窗口位置/大小记忆 + 新增 `npm run smoke:app` 启动冒烟并接进发版流水线 |

@@ -137,8 +137,11 @@
 - [x] CI：版本号带 `-` → 发成 pre-release + 更新固定 `channel-beta` Release 的 `latest.json`
 - [x] 单测：通道归一化 / beta endpoint / 降级识别（15 项全过）
 - [x] 通道探针 `PIWEB_CHANNEL_PROBE=beta|stable`（只查不装，写日志后退出）用于真机验证端点选择
-- [ ] 真机验证：beta 清单可读 → 切 beta 检查 → 发 beta.2 能升级 → 切回正式版提示降级
-- [ ] 发布 v0.3.0-beta.1（pre-release）
+- [x] 发布 v0.3.0-beta.1（pre-release）+ 固定 `channel-beta` 清单（CI 自动）
+- [x] 真机验证：beta 清单可读（探针 `已是最新`）；正式版清单未被 beta 抢走（仍是 0.2.11）；跨通道降级识别正确（探针 `发现 v0.2.11（当前 v0.3.0-beta.1）-> 降级`）
+- [x] 真机验证升级链路：v0.3.0-beta.2（pre-release）→ `channel-beta` 清单更新为 beta.2 → 通道=beta 时检出 `v0.3.0-beta.2（当前 beta.1）-> 升级`
+- [ ] 用户在界面上点一次「切换到测试版」验证弹窗/下载/安装/重启（当前装的是 0.3.0-beta.1，切过去会提示 beta.2）
+- [ ] beta 稳定几天后发 v0.3.0 正式版
 
 ## 每次发版的固定动作
 

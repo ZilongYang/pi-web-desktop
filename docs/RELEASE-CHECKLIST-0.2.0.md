@@ -170,6 +170,8 @@
 - [x] 根因：托盘菜单也注册了 `TrayIconBuilder::on_menu_event`，而托盘菜单点击同时会走到 App 的全局菜单监听（`Builder::on_menu_event`）→ 同一个动作执行两遍
 - [x] 修复：`tray.rs` 不再注册托盘级监听；托盘专有 id（`tray_toggle` / `tray_quit`）统一在 `menu::on_event` 处理
 - [x] 真机复验：点击后日志只剩一条「手动检查更新」
+- [x] **F22 退出确认**（同一版）：任何退出（⌘Q / 菜单 / 托盘）都先弹确认框；有会话在跑时提示「会中断 N 个会话」；
+      取消则继续运行。`cargo test` 覆盖 `runningSessionIds` 解析；更新后自动重启（RESTART_EXIT_CODE）直接放行
 - [ ] 发布 v0.3.1-beta.2
 
 ## 每次发版的固定动作

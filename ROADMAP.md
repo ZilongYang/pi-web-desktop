@@ -56,6 +56,7 @@
 | 关于面板显示内置版本 | ✅ 0.2.9 | credits 里显示 pi-web / pi SDK / Node 版本（F15） |
 | 窗口位置/大小记忆 | ✅ 0.2.10 | 物理像素存 `config.json`；拔屏后自动居中（F19） |
 | 缩放下的输入框显示 | ✅ 0.2.11 | 注入 CSS 关掉 textarea 横向滚动条（F20，WebKit placeholder 不换行导致） |
+| 退出确认 | ✅ 0.3.1 | 任何退出都弹确认；有会话在跑时提示会被中断（F22） |
 | 菜单栏托盘 + 关窗隐藏 | ✅ 0.3.1 | π 模板图标；关窗=隐藏到菜单栏；托盘菜单复用主菜单动作（F16） |
 | L3 清单独立 | ✅ 0.3.1 | 侧车包/清单放固定 Release `piweb-sidecar`，与壳发布解耦（F14） |
 | 更新通道（正式 / beta） | ✅ 0.3.0 正式版 | 菜单「Pi Web → 更新通道」；正式版读 `releases/latest`，beta 读固定 `channel-beta` 清单；允许降级重装 |
@@ -185,6 +186,17 @@
   和 `patch-pi-web-collapse.mjs` 一起受 `--no-patch` 控制；CI 的 `npm run sidecar` 也会带上。
 - **验证**：F18 的冒烟断言「导出接口返回 HTML」—— 打补丁前 500（`sortChildren expected 1 match, found 0`），
   打补丁后 200 + `text/html`（278.9 KB）。注意：补丁只对**新构建的 App / 新侧车**生效，已装的 0.2.8 要升级到 0.2.9 才修好。
+
+#### F22. 退出前一律确认（有会话在跑时额外警告） —— ✅ 0.3.1-beta.2
+
+- **需求**（用户 2026-11-04）：⌘Q / 菜单「退出」/ 托盘「退出」**任何情况都要先确认**，不区分有没有任务在跑；
+  如果 pi-web 里有会话正在运行，确认框里再说明「退出会中断 N 个会话」。
+- **实现**：新增 `src-tauri/src/quit_guard.rs`。`ExitRequested` 一律先 `prevent_exit()`，后台线程查
+  `GET /api/sessions` 的 `runningSessionIds`，再弹确认框（退出 / 取消）；确定才再次 exit 并正常停侧车。
+  `RESTART_EXIT_CODE`（应用更新后自动重启）直接放行，避免把更新流程卡住。`CONFIRMED` 标记避免二次弹窗。
+  关窗按钮仍走 F16 的「隐藏到菜单栏」，不算退出。
+- **验收**：`cargo test` 覆盖 `runningSessionIds` 解析；真机：⌘Q 必弹确认框；有会话在跑时文案显示数量；
+  取消后 App 继续运行、服务不断。
 
 ### P1 — 功能验收与平台
 

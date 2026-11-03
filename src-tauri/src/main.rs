@@ -14,6 +14,7 @@ mod logging;
 mod menu;
 mod probe;
 mod progress;
+mod quit_guard;
 mod sidecar;
 mod tray;
 mod update;
@@ -613,6 +614,19 @@ fn downloads_destination(app: &tauri::AppHandle, url: &Url) -> std::path::PathBu
     base.join(file_name)
 }
 
+/// 真正退出前的收尾：窗口几何落盘 + 停侧车 + 清 run record。
+fn shutdown(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        window_state::save(app, &window, true);
+    }
+    let state = app.state::<AppState>();
+    let running = state.sidecar.lock().ok().and_then(|mut guard| guard.take());
+    if let Some(running) = running {
+        sidecar::stop(running);
+    }
+    sidecar::clear_own_state(app);
+}
+
 fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -811,18 +825,16 @@ fn main() {
                 crate::logging::line("tray", "Dock 图标唤回窗口");
             }
         }
-        RunEvent::ExitRequested { .. } | RunEvent::Exit => {
-            // 退出前把窗口几何落盘（关窗路径也存，这里兜住 ⌘Q / 菜单退出）
-            if let Some(window) = app.get_webview_window("main") {
-                window_state::save(app, &window, true);
+        // 退出保护（F22）：任何退出（⌘Q / 菜单退出 / 托盘退出）都先确认。
+        // 关窗按钮走的是 F16 的「隐藏到菜单栏」，不会到这里。
+        RunEvent::ExitRequested { api, code, .. } => {
+            if !quit_guard::on_exit_requested(app, &api, code) {
+                // 已拦下，等用户在确认框里选择
+                return;
             }
-            let state = app.state::<AppState>();
-            let running = state.sidecar.lock().ok().and_then(|mut guard| guard.take());
-            if let Some(running) = running {
-                sidecar::stop(running);
-            }
-            sidecar::clear_own_state(app);
+            shutdown(app);
         }
+        RunEvent::Exit => shutdown(app),
         _ => {}
     });
 }

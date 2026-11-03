@@ -200,7 +200,7 @@ async function main() {
       printOutput(first);
     } else {
       ok(`App 启动并正常退出（退出码 0）`);
-      if (first.output.includes(`启动 Pi Web Desktop ${VERSION}`)) ok(`日志有启动行（0.2.10 → ${VERSION}）`);
+      if (first.output.includes(`启动 Pi Web Desktop ${VERSION}`)) ok(`日志有启动行（当前版本 ${VERSION}）`);
       else bad(`日志里没有「启动 Pi Web Desktop ${VERSION}」`);
 
       const saved = readConfig(firstConfigDir);

@@ -419,15 +419,29 @@ pub fn probe_channel(app: &tauri::AppHandle) {
     let raw = std::env::var("PIWEB_CHANNEL_PROBE").unwrap_or_else(|_| CHANNEL_STABLE.to_string());
     let channel = normalize_channel(&raw);
     let label = channel_label(channel);
-    crate::logging::line("update-probe", &format!("通道={label} 清单={:?}", endpoint_for(channel)));
-    let result = build_updater(app, false).and_then(|updater| {
+    let allow_any = std::env::var("PIWEB_CHANNEL_PROBE_ALLOW_DOWNGRADE").ok().as_deref() == Some("1");
+    crate::logging::line(
+        "update-probe",
+        &format!("通道={label} 清单={:?} 允许降级={allow_any}", endpoint_for(channel)),
+    );
+    let result = build_updater(app, allow_any).and_then(|updater| {
         tauri::async_runtime::block_on(async { updater.check().await.map_err(|e| e.to_string()) })
     });
     match result {
-        Ok(Some(update)) => crate::logging::line(
-            "update-probe",
-            &format!("发现 v{}（当前 v{}）", update.version, env!("CARGO_PKG_VERSION")),
-        ),
+        Ok(Some(update)) => {
+            let current = env!("CARGO_PKG_VERSION");
+            let direction = if compare_versions(update.version.as_str(), current)
+                == std::cmp::Ordering::Less
+            {
+                "降级"
+            } else {
+                "升级"
+            };
+            crate::logging::line(
+                "update-probe",
+                &format!("发现 v{}（当前 v{current}）-> {direction}", update.version),
+            );
+        }
         Ok(None) => crate::logging::line(
             "update-probe",
             &format!("已是最新（当前 v{}）", env!("CARGO_PKG_VERSION")),

@@ -553,6 +553,32 @@ fn open_in_browser(app: tauri::AppHandle) {
     }
 }
 
+/// 修 pi-web 输入框的横向滚动条（F20，2026-11-03）。
+///
+/// 现象：窗口变窄或页面缩放非 100% 时，输入框里出现一条横向滚动条，压在占位文字上。
+/// 根因：pi-web 的 `.chat-input-textarea` 内联了 `overflow:auto`，而 **WebKit（WKWebView）
+///      里 textarea 的 placeholder 不换行**（Chromium 会换行）—— 只要输入框宽度小于
+///      placeholder 的文本宽度，就产生几十~几百 px 的横向溢出，于是画出横向滚动条。
+///      实测（缩放 150%，窗口 1470×1011）：`textarea sw=817 cw=545 overflow-x=auto`。
+/// 手段：每个文档注入一条 CSS，关掉输入框的横向滚动（textarea 本来靠软换行，不需要横向滚动）。
+/// 放在初始化脚本里，随每次导航生效；L3 热更新换掉 pi-web 后依然有效。
+const PIWEB_CSS_FIX: &str = r#"
+(function () {
+  var css = '.chat-input-textarea{overflow-x:hidden!important}';
+  function inject() {
+    if (document.getElementById('piweb-desktop-css-fix')) return;
+    var style = document.createElement('style');
+    style.id = 'piweb-desktop-css-fix';
+    style.textContent = css;
+    (document.head || document.documentElement).appendChild(style);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', inject);
+  else inject();
+  setTimeout(inject, 1000);
+  setTimeout(inject, 3000);
+})();
+"#;
+
 fn new_window_for(
     app: &tauri::AppHandle,
     url: Url,
@@ -567,6 +593,7 @@ fn new_window_for(
         // 要求新 webview 与发起方使用同一 configuration，否则 WebKit 直接抛
         // NSException（表现为整个 App abort）。之前没传 -> 点「完整历史」必崩。
         .window_features(features)
+        .initialization_script(PIWEB_CSS_FIX)
         .build()
         .map_err(|e| e.to_string())?;
     Ok(window)
@@ -653,6 +680,7 @@ fn main() {
             let new_window_guard = allowed_port.clone();
 
             let window = WebviewWindowBuilder::from_config(&handle, &window_config)?
+                .initialization_script(PIWEB_CSS_FIX)
                 .on_navigation(move |url| url_allowed(&nav_guard, url))
                 .on_new_window(move |url, features| {
                     if url_allowed(&new_window_guard, &url) {

@@ -9,7 +9,8 @@
 
 - 仓库：<https://github.com/ZilongYang/pi-web-desktop>（MIT）
 - ⚠️ **发布硬规则（2026-11-03 起）**：**必须真机启动验证过才允许发版**。`npm run smoke` 只测侧车，覆盖不到 App 的启动路径（菜单/窗口/配置）—— 0.2.9 就是 CI 全绿、用户双击即崩。发版前必须 `npm run smoke:app`（release.yml 已加这一步）。
-- 最新版本：**v0.2.10**（内置 pi-web 0.14.2 / pi SDK 1.5.0 / Node 22.23.4）—— **已发布**（ci + release 双绿，含新加的启动冒烟）；本机已安装 0.2.10
+- 最新版本：**v0.2.11**（内置 pi-web 0.14.2 / pi SDK 1.5.0 / Node 22.23.4）—— 修 F20（输入框横向滚动条压字）+ 保留 0.2.10 的启动崩溃修复 / F19
+  - v0.2.10 已发布（ci + release 双绿，含启动冒烟）；本机安装的是 0.2.11（本地构建）
   - **v0.2.9 已撤回**（Release + tag 均已删除）：启动即 panic（`state() called before manage() for tauri_utils::Env`），见 B3。
   - v0.2.6 已撤回（它把 0.14.2 打进包，消耗掉当时的 L3 验证场景），其内容并入 0.2.7。
   - v0.2.8 修复「完整历史」崩溃（B1）。
@@ -21,7 +22,9 @@
 
 当前状态：**v0.2.10 已发布并装在本机**；0.2.9 已撤回。启动冒烟（`npm run smoke:app`）已接进 release.yml 并且在 v0.2.10 的 release 里真跑过，
 以后这类"CI 绿但用户双击就崩"会被拦住。0.2.9 里除启动崩溃外的改动（B2 导出修复 / F18 / F15 / F17）在 0.2.10 全部保留。
-本机待真机复验：拖动/缩放窗口后重启是否回到原位置；关于面板三个内置版本号；菜单「检查应用更新…」；pi-web「导出」是否得到 HTML。
+本机待真机复验：拖动/缩放窗口后重启是否回到原位置；关于面板三个内置版本号；菜单「检查应用更新…」；pi-web「导出」是否得到 HTML；F20 在缩放下的显示。
+
+> 待讨论/未开工：**更新通道（正式版 / 测试版）**——见下一节。
 
 1. **F16 菜单栏托盘** —— 关窗行为已定 **B（关窗隐藏到菜单栏，不退出）**：
    - `Cargo.toml` 给 tauri 加 `tray-icon` feature；`main.rs` 用 `TrayIconBuilder` + 复用 `menu.rs` 的动作函数；
@@ -47,6 +50,7 @@
 | 导出会话 HTML | ✅ 0.2.9 | 打补丁容忍 SDK 1.5.0 模板的 0 匹配（B2）；smoke 有断言（F18） |
 | 关于面板显示内置版本 | ✅ 0.2.9 | credits 里显示 pi-web / pi SDK / Node 版本（F15） |
 | 窗口位置/大小记忆 | ✅ 0.2.10 | 物理像素存 `config.json`；拔屏后自动居中（F19） |
+| 缩放下的输入框显示 | ✅ 0.2.11 | 注入 CSS 关掉 textarea 横向滚动条（F20，WebKit placeholder 不换行导致） |
 | App 启动冒烟 | ✅ 0.2.10 | `npm run smoke:app`：真启动构建产物，断言不崩、几何存取；已接进 release.yml |
 | L2 应用自更新（Tauri updater + minisign） | ✅ 真机闭环 | 进度窗 + 重启确认（0.2.3 起） |
 | L3 pi-web 热更新（只换 pi-web，不动 Node） | ✅ **真机闭环** | 0.2.5 上真实从 0.14.1 热更到 0.14.2；进度窗/回滚已实拍验证 |
@@ -108,6 +112,22 @@
 - **根因**：pi-web 的「完整历史」用 `window.open` 开新窗口，走到我们的 `on_new_window`；我们创建新窗口时**没有沿用发起方 webview 的 configuration**。Tauri 文档明确：macOS 上 `NewWindowResponse::Create` 的 webview 必须与调用方使用同一 configuration（`WindowFeatures.webview_configuration`），否则 WebKit 直接抛 NSException，进程 abort。
 - **修复**（0.2.8）：`new_window_for()` 增加 `window_features(features)`，`on_new_window` 把 WebKit 传来的 `features` 透传。同一路径也覆盖「会话 ⋯ → 新标签页打开」。
 - **待用户复验**：0.2.8 上点「完整历史」与「新标签页打开会话」都应正常开新窗口。
+
+#### F20. 缩放/窗口变窄时输入框出现横向滚动条，压住占位文字 —— ✅ 0.2.11 修复
+
+- **现象**：把窗口调窄或页面缩放到非 100%（如 110%/150%）时，pi-web 输入框里出现一条横向滚动条，
+  正好压在「消息…输入 / 使用命令」那行占位文字上（截图：`docs/screenshot-composer-scrollbar-before.png`）。
+  用户反馈「以前的版本没有」—— 实际触发条件是窗口/缩放组合，不是版本。
+- **定位**（在真机 WebView 里注入诊断脚本，缩放 150%）：
+  `TEXTAREA.chat-input-textarea sw=817 cw=545 sh=23 ch=14 ox=auto oy=hidden`，且**全页面只有它横向溢出**。
+- **根因**：pi-web 的输入框是 `<textarea>` 且内联了 `overflow:auto`；**WebKit 里 textarea 的 placeholder 不换行**
+  （Chromium 会换行，所以浏览器里看不出来）。只要输入框宽度 < placeholder 文本宽度（窗口变窄 / 缩放让 CSS 视口变小），
+  就产生横向溢出 → 画出横向滚动条。这条滚动条吃掉输入框高度，于是压住文字。
+- **修复**（0.2.11）：壳在 webview 初始化脚本里注入一条 CSS
+  `.chat-input-textarea{overflow-x:hidden!important}`（textarea 本来靠软换行，不需要横向滚动）。
+  放在 `initialization_script`（主窗口 + 新开窗口都挂），随每次导航生效，L3 热更新换掉 pi-web 后依然有效。
+- **验证**：真机截图对照 —— 缩放 110% 与 150% 下滚动条消失、占位文字完整
+  （`docs/screenshot-composer-scrollbar-after.png`）；`npm run smoke:app` / `npm run smoke` 均通过。
 
 #### B3. 0.2.9 启动即崩（`state() called before manage() for tauri_utils::Env`）—— ✅ 0.2.10 修复
 
@@ -201,6 +221,7 @@
 
 | 版本 | 内容 |
 |---|---|
+| 0.2.11 | 修 F20：缩放/窄窗口下输入框横向滚动条压住文字（注入 CSS 关闭 textarea 横向滚动） |
 | 0.2.10 | 修 B3 启动崩溃（菜单改到 setup 里安装）+ F19 窗口位置/大小记忆 + 新增 `npm run smoke:app` 启动冒烟并接进发版流水线 |
 | 0.2.9 | **已撤回**（启动崩溃 B3）；内容（B2/F18/F15/F17）保留在 0.2.10 |
 | 0.2.8 | 修复点击「完整历史」崩溃（新窗口必须沿用发起方 webview configuration） |

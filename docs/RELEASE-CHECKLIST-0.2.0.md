@@ -118,6 +118,15 @@
 - [x] 安装恢复：0.2.10 覆盖安装到 `/Applications`，`codesign --verify --deep --strict` 通过（`valid on disk` / `satisfies its Designated Requirement`），启动正常（`启动 Pi Web Desktop 0.2.10` + `服务就绪用时 1168ms`）
 - [ ] 用户真机复验：启动正常；拖动/缩放窗口后重启回到原位；关于面板三个内置版本号；菜单「检查应用更新…」；pi-web「导出」得到 HTML
 
+## 0.2.11（修 F20 输入框横向滚动条）
+
+- [x] 真机定位：注入诊断脚本，确认只有输入框 `<textarea>` 横向溢出（`sw=817 cw=545`），并用对照组排除窗口尺寸因素（100% 正常 / 150% 复现）
+- [x] 修复：`main.rs` 增加 `PIWEB_CSS_FIX` 初始化脚本（`.chat-input-textarea{overflow-x:hidden!important}`），主窗口与新开窗口都挂，随每次导航生效
+- [x] 真机验证：缩放 110% 与 150% 截图对照，滚动条消失、占位文字完整（`docs/screenshot-composer-scrollbar-{before,after}.png`）
+- [x] `cargo test` 12 项通过；`npm run smoke:app`、`npm run smoke` 均通过；安装包签名封印有效（`valid on disk` / `satisfies its Designated Requirement`）
+- [x] 0.2.11 已安装到 `/Applications`，缩放已还原为你原来的 110%
+- [ ] 发布 v0.2.11（等确认）
+
 ## 每次发版的固定动作
 
 ```bash

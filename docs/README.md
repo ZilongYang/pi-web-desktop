@@ -20,6 +20,8 @@
 | [screenshot-menu-chinese.png](screenshot-menu-chinese.png) | 全中文菜单栏（0.2.5） |
 | [screenshot-update-progress.png](screenshot-update-progress.png) | 应用更新（L2）下载进度窗（0.2.3 起） |
 | [screenshot-l3-progress.png](screenshot-l3-progress.png) | pi-web 热更新（L3）安装阶段进度窗（0.2.7 起） |
+| [screenshot-composer-scrollbar-before.png](screenshot-composer-scrollbar-before.png) | F20 修复前：缩放 150% 时输入框横向滚动条压住文字（0.2.10） |
+| [screenshot-composer-scrollbar-after.png](screenshot-composer-scrollbar-after.png) | F20 修复后：同一缩放档位下显示正常（0.2.11） |
 | [screenshot-error-state.png](screenshot-error-state.png) | 启动失败态（原生对话框 + 日志尾部 + 重试） |
 
 ## 写文档的约定

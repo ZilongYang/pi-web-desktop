@@ -160,9 +160,9 @@
 - [x] F16 关窗探针：`[window] 关闭按钮：已隐藏到菜单栏` + `[tray-probe] close() 之后 visible=false`，进程仍存活
 - [x] 菜单栏图标真机截图：`docs/screenshot-tray-icon.png`
 - [x] 发版前三件套：`cargo test` / `npm run smoke` / `npm run smoke:app`
-- [ ] 发布 v0.3.1-beta.1 → 切 beta 通道验证升级
+- [x] 发布 v0.3.1-beta.1（Pre-release，ci 2m32s / release 8m49s 双绿）
 - [ ] 真机手动确认：点关闭 → 窗口隐藏 App 不退出；托盘「显示/隐藏主窗口」「退出」；Dock 图标唤回
-- [ ] 发布后确认固定 Release `piweb-sidecar` 的清单地址与包 URL 正确
+- [x] 发布后确认：固定 Release `piweb-sidecar` 存在（Pre-release），含侧车包 + 清单，清单 URL 为 `releases/download/piweb-sidecar/...`；默认地址真机验证通过
 
 ## 每次发版的固定动作
 

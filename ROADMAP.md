@@ -11,7 +11,8 @@
 - 版本号规则（2026-11-03 用户定）：**默认只递增 patch** —— `0.3.0` → `0.3.1-beta.1` → `0.3.1` → `0.3.2-beta.1` …，只有不兼容/重构才升 minor。详见 [docs/RELEASE-PROCESS.md](docs/RELEASE-PROCESS.md)。
 - ⚠️ **发布硬规则（2026-11-03 起）**：**必须真机启动验证过才允许发版**。`npm run smoke` 只测侧车，覆盖不到 App 的启动路径（菜单/窗口/配置）—— 0.2.9 就是 CI 全绿、用户双击即崩。发版前必须 `npm run smoke:app`（release.yml 已加这一步）。
 - 更新通道：**正式版 / 测试版 beta** 已实现（方案见 [docs/PLAN-2026-11-03-channels.md](docs/PLAN-2026-11-03-channels.md)）
-- 最新版本：**v0.3.0**（内置 pi-web 0.14.2 / pi SDK 1.5.0 / Node 22.23.4）—— **已发布、本机已安装**（正式版）：更新通道转正；含 0.2.11 的 F20 修复与 0.2.10 的启动崩溃修复 / F19
+- **正在测试的版本：v0.3.1-beta.1**（pre-release）：F16 菜单栏托盘 + 关窗隐藏、F14 L3 清单独立；本机已安装
+- 最新正式版：**v0.3.0**（内置 pi-web 0.14.2 / pi SDK 1.5.0 / Node 22.23.4）：更新通道转正；含 0.2.11 的 F20 修复与 0.2.10 的启动崩溃修复 / F19
   - 线上：`releases/latest` = v0.3.0；beta 通道清单仍指向 `0.3.0-beta.2`（beta 用户切回正式版即可升级）
   - v0.2.10 已发布（ci + release 双绿，含启动冒烟）；本机安装的是 0.2.11（本地构建）
   - **v0.2.9 已撤回**（Release + tag 均已删除）：启动即 panic（`state() called before manage() for tauri_utils::Env`），见 B3。

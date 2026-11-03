@@ -172,7 +172,11 @@
 - [x] 真机复验：点击后日志只剩一条「手动检查更新」
 - [x] **F22 退出确认**（同一版）：任何退出（⌘Q / 菜单 / 托盘）都先弹确认框；有会话在跑时提示「会中断 N 个会话」；
       取消则继续运行。`cargo test` 覆盖 `runningSessionIds` 解析；更新后自动重启（RESTART_EXIT_CODE）直接放行
-- [ ] 发布 v0.3.1-beta.2
+- [x] 发布 v0.3.1-beta.2（Pre-release，ci 绿 / release 绿；`channel-beta` 清单 → 0.3.1-beta.2；正式版通道仍 0.3.0）
+- [x] 期间修了一个测试本身的坑：smoke-app 的副本 App 放在 temp 里会被 macOS 拒绝访问自身资源
+      （`sandbox_extension_issue_file_to_process`），导致「假通过」且失败弹窗跳到屏幕上。
+      已改为复制到 `~/Applications/Pi-Web-Desktop-Smoke.app`，并**新增断言：侧车真的在监听端口（HTTP 可连）**
+- [x] 用户本机验收通过（托盘/关窗隐藏/⌘Q 确认/退出确认/检查更新单弹窗）
 
 ## 每次发版的固定动作
 

@@ -161,6 +161,20 @@ async function main() {
     process.exit(1);
   }
 
+  // 已有实例在跑时，单实例插件会让新进程直接退出，表现成"启动即结束"——先说清楚。
+  const running = await new Promise((resolve) => {
+    const socket = net.connect({ port: 30241, host: "127.0.0.1" });
+    socket.setTimeout(800);
+    socket.on("connect", () => { socket.destroy(); resolve(true); });
+    socket.on("error", () => resolve(false));
+    socket.on("timeout", () => { socket.destroy(); resolve(false); });
+  });
+  if (running) {
+    console.error("[smoke-app] 检测到已有实例在运行（端口 30241）：先退出 Pi Web Desktop 再跑本测试");
+    console.error("  说明：单实例插件会让新进程立刻退出，看起来像“启动就崩”，会误报。");
+    process.exit(1);
+  }
+
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "piweb-app-smoke-"));
   const cleanup = () => {
     if (!KEEP) fs.rmSync(tmpRoot, { recursive: true, force: true });

@@ -98,7 +98,8 @@
 - [x] `make-dist.sh` 校验链全绿：签名 adhoc / 资源封印 `--verify --deep --strict` / arm64 / 版本 0.2.9 / 无调试 entitlement / 无构建者路径泄漏 / 侧车可执行位；zip 生成成功
 - [x] 产物二进制里核对 F15/F17 文案已编入（`内置 pi-web`、`检查应用更新` 等 UTF-8 字节）
 - [ ] 本地 dmg 未生成：受限沙箱里 `hdiutil` 挂载失败（OSStatus error 1），dmg 由 CI（macos-14）生成；非沙箱终端可跑 `npm run dist` 复验
-- [ ] 发布 v0.2.9（等用户按发版）
+- [x] 发布 v0.2.9：`git tag v0.2.9` + push → ci 绿（含新的导出断言）、release 绿（构建 + dmg + updater 包 + Release 资产齐全）
+- [x] 发布侧核验：`latest.json` 版本 0.2.9 + minisign 签名；`SHA256SUMS` 四件套齐全；`piweb-sidecar.json` 指向 0.14.2 侧车包（同版本，L3 不会误弹）
 - [ ] 用户真机复验：关于面板能看到三个内置版本号；菜单文案为「检查应用更新…」；pi-web 里点「导出」得到 HTML 而不是 JSON 错误
 
 ## 每次发版的固定动作

@@ -52,6 +52,22 @@ jobs:
       - name: 打发布包（ad-hoc 签名 / dmg / 侧车包 / SHA256SUMS）
         run: bash scripts/make-dist.sh
 
+      - name: 发布侧车清单（固定 Release piweb-sidecar）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # L3（pi-web 热更新）的清单与包放在固定 tag 的 Release 里，和壳的发布解耦：
+          #   ① 不再被应用 Release 的 `--clobber` 冲掉；
+          #   ② 不再依赖 `releases/latest` 的 CDN 缓存。
+          # 注意必须是 pre-release，否则会抢走 `releases/latest`，把 L2 的 latest.json 指错。
+          gh release view piweb-sidecar >/dev/null 2>&1 \
+            || gh release create piweb-sidecar \
+                 --title "pi-web 侧车（L3 清单与包）" \
+                 --notes "L3 热更新用的侧车包与清单，由 CI 自动覆盖，勿手工修改。" \
+                 --prerelease
+          gh release upload piweb-sidecar dist/"piweb-app-"*.tar.gz dist/piweb-sidecar.json --clobber
+          echo "已更新固定 Release piweb-sidecar"
+
       - name: 生成 updater 清单 latest.json
         run: |
           python3 - <<'PY'

@@ -54,6 +54,8 @@
 | 关于面板显示内置版本 | ✅ 0.2.9 | credits 里显示 pi-web / pi SDK / Node 版本（F15） |
 | 窗口位置/大小记忆 | ✅ 0.2.10 | 物理像素存 `config.json`；拔屏后自动居中（F19） |
 | 缩放下的输入框显示 | ✅ 0.2.11 | 注入 CSS 关掉 textarea 横向滚动条（F20，WebKit placeholder 不换行导致） |
+| 菜单栏托盘 + 关窗隐藏 | ✅ 0.3.1 | π 模板图标；关窗=隐藏到菜单栏；托盘菜单复用主菜单动作（F16） |
+| L3 清单独立 | ✅ 0.3.1 | 侧车包/清单放固定 Release `piweb-sidecar`，与壳发布解耦（F14） |
 | 更新通道（正式 / beta） | ✅ 0.3.0 正式版 | 菜单「Pi Web → 更新通道」；正式版读 `releases/latest`，beta 读固定 `channel-beta` 清单；允许降级重装 |
 | App 启动冒烟 | ✅ 0.2.10 | `npm run smoke:app`：真启动构建产物，断言不崩、几何存取；已接进 release.yml |
 | L2 应用自更新（Tauri updater + minisign） | ✅ 真机闭环 | 进度窗 + 重启确认（0.2.3 起） |
@@ -225,6 +227,7 @@
 
 | 版本 | 内容 |
 |---|---|
+| 0.3.1-beta.1 | F16 菜单栏托盘 + 关窗隐藏到菜单栏；F14 L3 清单改放固定 Release `piweb-sidecar`（壳/侧车发布解耦） |
 | 0.3.0 | **更新通道转正**（正式版 / 测试版 beta）；含此前全部修复 |
 | 0.3.0-beta.2 | 验证版（同 beta.1，用于验证 beta 通道升级链路） |
 | 0.3.0-beta.1 | 更新通道（正式版 / 测试版 beta）：菜单可切换、按通道取清单、允许降级重装；CI 支持 beta（pre-release + 固定 `channel-beta` 清单） |

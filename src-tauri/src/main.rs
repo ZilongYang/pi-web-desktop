@@ -15,6 +15,7 @@ mod menu;
 mod probe;
 mod progress;
 mod sidecar;
+mod tray;
 mod update;
 mod window_state;
 mod zoom;
@@ -665,6 +666,12 @@ fn main() {
                 Err(error) => logging::line("app", &format!("构建菜单失败：{error}")),
             }
 
+            // 菜单栏托盘（F16）
+            match tray::create(&handle) {
+                Ok(()) => {}
+                Err(error) => logging::line("tray", &format!("创建菜单栏托盘失败：{error}")),
+            }
+
             let window_config = app
                 .config()
                 .app
@@ -721,6 +728,17 @@ fn main() {
             window_state::restore(&handle, &window);
             window_state::watch(&handle, &window);
 
+            // F16 行为 B：关闭窗口 = 隐藏到菜单栏，不退出（pi-web 后台任务继续跑）。
+            // 真正退出只走「托盘/菜单 → 退出」或 ⌘Q。
+            let window_for_close = window.clone();
+            window.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window_for_close.hide();
+                    crate::logging::line("window", "关闭按钮：已隐藏到菜单栏（可从菜单栏恢复）");
+                }
+            });
+
             let _ = window.show();
 
             // 恢复上次的页面缩放（菜单「视图 → 放大/缩小/实际大小」改的那个）
@@ -737,6 +755,24 @@ fn main() {
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(3));
                     update::manual_check_all(&handle);
+                });
+            }
+            // 托盘/关窗探针：PIWEB_TRAY_PROBE=1 → 3 秒后调用 window.close()（应被拦截成隐藏），
+            // 打一行状态再退出。用来在不需要点击 UI 的环境里验证 F16 的关窗行为。
+            if std::env::var("PIWEB_TRAY_PROBE").ok().as_deref() == Some("1") {
+                let probe_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    if let Some(window) = probe_handle.get_webview_window("main") {
+                        let _ = window.close();
+                        std::thread::sleep(std::time::Duration::from_millis(800));
+                        let visible = window.is_visible().unwrap_or(true);
+                        crate::logging::line(
+                            "tray-probe",
+                            &format!("close() 之后 visible={visible}（应为 false=已隐藏到菜单栏）"),
+                        );
+                    }
+                    probe_handle.exit(0);
                 });
             }
             // 通道探针（验证「正式版/测试版」通道选择）：设 PIWEB_CHANNEL_PROBE=beta|stable
@@ -766,6 +802,15 @@ fn main() {
         .expect("初始化 Tauri 应用失败");
 
     app.run(|app, event| match event {
+        // 窗口隐藏到菜单栏后，点 Dock 图标应该把窗口叫回来（macOS 的 reopen 事件）
+        #[cfg(target_os = "macos")]
+        RunEvent::Reopen { .. } => {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+                crate::logging::line("tray", "Dock 图标唤回窗口");
+            }
+        }
         RunEvent::ExitRequested { .. } | RunEvent::Exit => {
             // 退出前把窗口几何落盘（关窗路径也存，这里兜住 ⌘Q / 菜单退出）
             if let Some(window) = app.get_webview_window("main") {

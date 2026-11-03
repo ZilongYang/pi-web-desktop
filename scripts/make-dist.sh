@@ -152,7 +152,7 @@ cat > "$DIST/piweb-sidecar.json" <<JSON
   "nodeVersion": "$NODE_VERSION",
   "assets": {
     "$TARGET": {
-      "url": "https://github.com/ZilongYang/pi-web-desktop/releases/latest/download/$(basename "$L3_TAR")",
+      "url": "https://github.com/ZilongYang/pi-web-desktop/releases/download/piweb-sidecar/$(basename "$L3_TAR")",
       "sha256": "$L3_SHA",
       "bytes": $L3_BYTES
     }

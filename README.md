@@ -57,7 +57,7 @@ cargo build                 # 调试构建
 
 | 壳版本 | 内置 pi-web | 内置 Node |
 |---|---|---|
-| 0.3.0 | 0.14.2 | 22.23.4 |
+| 0.3.1-beta.1 | 0.14.2 | 22.23.4 |
 
 发版流程与版本号规则见 [docs/RELEASE-PROCESS.md](docs/RELEASE-PROCESS.md)（默认只递增 patch：`0.3.1-beta.1` → `0.3.1` → `0.3.2-beta.1`）。
 

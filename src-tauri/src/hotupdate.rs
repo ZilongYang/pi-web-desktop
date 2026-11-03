@@ -1,6 +1,6 @@
 //! L3：只更新 pi-web（不动 Node、不重装 app）。
 //!
-//! 数据来源是我们自己 GitHub Release 里的两个资产：
+//! 数据来源是固定 Release（tag `piweb-sidecar`）里的两个资产：
 //!   - `piweb-sidecar.json`：清单（piWebVersion + 各平台的 url/sha256/bytes）
 //!   - `piweb-app-<piWebVersion>-<target>.tar.gz`：只含 `app/`（pi-web + 它的 node_modules）
 //!     + `manifest.json`，不含 runtime/node
@@ -27,8 +27,13 @@ use std::time::{Duration, Instant};
 use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
+/// L3 清单放在**固定 tag** 的 Release 里（`piweb-sidecar`），不再挂在应用 Release 的
+/// `releases/latest` 上。原因见 docs/PLAN-2026-11-03-sidecar-manifest.md：
+///   ① 应用 Release 的资产会被 CI `--clobber` 重传，把手工换上的侧车清单冲掉；
+///   ② `releases/latest/download/...` 有约 5 分钟 CDN 缓存，刚换完经常还拿到旧清单。
+/// 侧车（pi-web）与壳的发布节奏由此解耦：可以只发侧车、不发壳版本。
 const DEFAULT_MANIFEST_URL: &str =
-    "https://github.com/ZilongYang/pi-web-desktop/releases/latest/download/piweb-sidecar.json";
+    "https://github.com/ZilongYang/pi-web-desktop/releases/download/piweb-sidecar/piweb-sidecar.json";
 const FETCH_TIMEOUT: &str = "10";
 const READY_TIMEOUT: Duration = Duration::from_secs(60);
 

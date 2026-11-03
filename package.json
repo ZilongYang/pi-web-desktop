@@ -1,7 +1,7 @@
 {
   "name": "pi-web-desktop",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1-beta.1",
   "description": "Tauri 2 desktop shell for pi-web (bundles Node + pi-web, no prerequisites)",
   "type": "module",
   "scripts": {

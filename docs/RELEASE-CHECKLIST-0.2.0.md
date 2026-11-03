@@ -151,6 +151,19 @@
 - [x] 发布 v0.3.0：CI 绿（ci 1m12s / release 8m59s）；Release 为 **Latest**（非预发布）
 - [x] 发布后核验：`releases/latest` = **v0.3.0**；`latest.json` version=0.3.0；`channel-beta` 仍指向 0.3.0-beta.2（符合设计）；本机安装 0.3.0、通道=正式版，启动日志 `应用已是最新`
 
+## 0.3.1-beta.1（F16 托盘 + F14 侧车清单独立）
+
+- [x] 方案存档：`docs/PLAN-2026-11-03-tray.md`、`docs/PLAN-2026-11-03-sidecar-manifest.md`
+- [x] **F16**：tauri 特性加 `tray-icon`/`image-png`；新增 `src-tauri/src/tray.rs`（π 模板图标、托盘菜单复用主菜单动作）；主窗口 `CloseRequested` → `prevent_close()` + `hide()`；`RunEvent::Reopen` → 唤回窗口；`PIWEB_TRAY_PROBE` 探针
+- [x] **F14**：`hotupdate.rs` 默认清单地址改为 `releases/download/piweb-sidecar/piweb-sidecar.json`；`make-dist.sh` 包 URL 同步；`release.yml` 新增「发布侧车清单到固定 Release `piweb-sidecar`（pre-release）」；应用 Release 仍保留一份清单兼容 ≤0.3.0
+- [x] F14 端到端演练（本地假 0.14.3 侧车包 + 本地 HTTP 清单 + `PIWEB_SIDECAR_MANIFEST_URL`）：清单读取 → 下载 79MB → SHA256 → 切换（备份 .prev）→ 侧车重启 → 删备份 → 提示已更新；演练后删 overlay 恢复内置 0.14.2
+- [x] F16 关窗探针：`[window] 关闭按钮：已隐藏到菜单栏` + `[tray-probe] close() 之后 visible=false`，进程仍存活
+- [x] 菜单栏图标真机截图：`docs/screenshot-tray-icon.png`
+- [x] 发版前三件套：`cargo test` / `npm run smoke` / `npm run smoke:app`
+- [ ] 发布 v0.3.1-beta.1 → 切 beta 通道验证升级
+- [ ] 真机手动确认：点关闭 → 窗口隐藏 App 不退出；托盘「显示/隐藏主窗口」「退出」；Dock 图标唤回
+- [ ] 发布后确认固定 Release `piweb-sidecar` 的清单地址与包 URL 正确
+
 ## 每次发版的固定动作
 
 ```bash

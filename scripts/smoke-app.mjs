@@ -8,6 +8,9 @@
  * **发版前必须真的把 App 启动一次**。
  *
  * 做法（不碰用户真实配置，也不需要 GUI 自动化权限）：
+ *   0. 先把 .app **复制到临时目录**再启动：pi-web 运行时会改写自己 `.next` 下的文件
+ *      （如 prerender-manifest.json），原地启动会把签名封印弄坏，让 CI 的打包校验
+ *      （codesign --verify --deep --strict）失败；
  *   1. 用 `PIWEB_CONFIG_DIR` 指到临时目录隔离配置；
  *   2. `PIWEB_WINDOW_PROBE=1` 让 App 启动 3 秒后打印窗口几何、写盘、退出；
  *   3. 断言：退出码 0 / stderr 里没有 `panicked at` / 有「启动 Pi Web Desktop」行 /
@@ -21,7 +24,7 @@
  *   node scripts/smoke-app.mjs --app <path>    # 指定 .app
  *   node scripts/smoke-app.mjs --keep          # 保留临时目录（排查用）
  */
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -165,12 +168,21 @@ async function main() {
   };
 
   try {
+    // 复制一份再跑：pi-web 会往自己 `.next/` 里写文件，原地跑会破坏已签名的产物。
+    const appCopy = path.join(tmpRoot, path.basename(APP));
+    execFileSync("ditto", [APP, appCopy], { stdio: "inherit" });
+    const runBinary = path.join(appCopy, "Contents", "MacOS", "pi-web-desktop");
+    if (!fs.existsSync(runBinary)) {
+      console.error(`[smoke-app] 复制后的产物里没有可执行文件：${runBinary}`);
+      process.exit(1);
+    }
+
     // ---- 第一轮：全新配置，验证能启动 + 几何能落盘 -------------------------
     const firstConfigDir = path.join(tmpRoot, "config-1");
     const firstPort = await freePort();
     writeConfig(firstConfigDir, { port: firstPort, zoom: 1 });
 
-    const first = await runOnce({ binary, configDir: firstConfigDir, label: "first" });
+    const first = await runOnce({ binary: runBinary, configDir: firstConfigDir, label: "first" });
     if (looksLikeEnvironmentSkip(first)) {
       console.log("[smoke-app] SKIP：当前环境起不了 GUI（无 WindowServer？）");
       printOutput(first);
@@ -207,7 +219,7 @@ async function main() {
     const wanted = { x: 120, y: 140, width: 1000, height: 680 };
     writeConfig(secondConfigDir, { port: secondPort, zoom: 1, window: wanted });
 
-    const second = await runOnce({ binary, configDir: secondConfigDir, label: "second" });
+    const second = await runOnce({ binary: runBinary, configDir: secondConfigDir, label: "second" });
     const restoreLine = `恢复窗口 ${wanted.width}×${wanted.height} @ (${wanted.x}, ${wanted.y})`;
     if (second.timedOut) {
       bad("第二轮启动超时");

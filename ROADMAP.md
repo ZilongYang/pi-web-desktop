@@ -120,6 +120,8 @@
 - **为什么没被测试拦住（教训）**：CI 只跑侧车冒烟（`npm run smoke`），App 的启动路径完全没覆盖；当时拿"构建成功 + 二进制里有新字符串"当验证，
   从没真正启动过一次 App。→ 0.2.10 新增 `scripts/smoke-app.mjs`：用临时 `PIWEB_CONFIG_DIR` 真启动构建产物，断言退出码 0、无 `panicked at`、
   有启动行、窗口几何能落盘/能恢复；已接进 `release.yml`。**发布硬规则见文首。**
+  注意：脚本会先把 `.app` 复制到临时目录再启动 —— pi-web 运行时会改写自己 `.next/` 下的文件（如 `prerender-manifest.json`），
+  原地启动会把签名封印弄坏，导致 `codesign --verify --deep --strict` / 打包校验失败。
 - **撤回**：v0.2.9 一并撤回（Release/tag 处理方式同 0.2.6）。
 
 #### F19. 记住窗口上次的位置和大小 —— ✅ 0.2.10 完成

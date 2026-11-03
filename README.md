@@ -57,7 +57,7 @@ cargo build                 # 调试构建
 
 | 壳版本 | 内置 pi-web | 内置 Node |
 |---|---|---|
-| 0.2.10 | 0.14.2 | 22.23.4 |
+| 0.3.0-beta.1 | 0.14.2 | 22.23.4 |
 
 版本只在 `sidecar.json` 里改一处：改完 `npm run sidecar` 再重建即可。升级 pi-web 后**必须**跑一次 `npm run smoke`。
 
@@ -66,6 +66,8 @@ cargo build                 # 调试构建
 ## 配置
 
 `~/Library/Application Support/com.zilong.piweb.desktop/config.json`：
+
+> `update_channel`：`stable`（默认，正式版）或 `beta`（测试版）。菜单 `Pi Web → 更新通道` 可直接切换；切回正式版时如果当前版本更高，会提示降级重装。
 
 ```json
 {

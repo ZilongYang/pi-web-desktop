@@ -83,7 +83,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION=$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
-          gh release create "v$VERSION" \
+          TAG="v$VERSION"
+          # 版本号带预发布后缀（如 0.3.0-beta.1）=> beta 通道：发成 pre-release，
+          # 这样 GitHub 的 releases/latest 不会被它抢走（正式版通道继续看上一个稳定版）。
+          PRERELEASE_FLAG=""
+          case "$VERSION" in
+            *-*) PRERELEASE_FLAG="--prerelease" ;;
+          esac
+          gh release create "$TAG" \
             "dist/Pi-Web-Desktop-$VERSION-aarch64.dmg" \
             "dist/Pi-Web-Desktop-$VERSION-aarch64.zip" \
             "dist/Pi-Web-Desktop-aarch64.dmg" \
@@ -96,4 +103,18 @@ jobs:
             "dist/SHA256SUMS" \
             --title "Pi Web Desktop v$VERSION" \
             --notes "Pi Web Desktop v$VERSION —— 见 README 与 docs/。" \
-            || gh release upload "v$VERSION" dist/* --clobber
+            $PRERELEASE_FLAG \
+            || gh release upload "$TAG" dist/* --clobber
+
+          # beta 通道清单：固定 tag `channel-beta` 的 Release，只放 latest.json。
+          # App 的测试版通道读 releases/download/channel-beta/latest.json。
+          # （清单单独放，避免像 F14 那样挂到应用 Release 上被 --clobber 冲掉）
+          if [ -n "$PRERELEASE_FLAG" ]; then
+            gh release view channel-beta >/dev/null 2>&1 \
+              || gh release create channel-beta \
+                   --title "beta 通道清单" \
+                   --notes "测试版通道的更新清单（由 CI 自动覆盖，勿手工修改）。" \
+                   --prerelease
+            gh release upload channel-beta dist/latest.json --clobber
+            echo "已更新 beta 通道清单"
+          fi

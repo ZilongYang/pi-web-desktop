@@ -127,6 +127,19 @@
 - [x] 0.2.11 已安装到 `/Applications`，缩放已还原为你原来的 110%
 - [ ] 发布 v0.2.11（等确认）
 
+## 0.3.0-beta.1（更新通道：正式版 / 测试版）
+
+- [x] 方案存档：`docs/PLAN-2026-11-03-channels.md`（四项决策：只有 stable+beta；允许降级重装；pi-web 不分通道；先发 0.2.11）
+- [x] 配置：`config.json` 新增 `update_channel`（默认 `stable`）
+- [x] 菜单：`Pi Web → 更新通道` 两个勾选项（正式版 / 测试版 beta）
+- [x] 运行时按通道选 endpoint（`UpdaterBuilder::endpoints`）；降级用 `version_comparator` 绕过「只升不降」
+- [x] `compare_versions` 改用 semver（预发布顺序：0.3.0-beta.2 < 0.3.0 < 0.3.1）
+- [x] CI：版本号带 `-` → 发成 pre-release + 更新固定 `channel-beta` Release 的 `latest.json`
+- [x] 单测：通道归一化 / beta endpoint / 降级识别（15 项全过）
+- [x] 通道探针 `PIWEB_CHANNEL_PROBE=beta|stable`（只查不装，写日志后退出）用于真机验证端点选择
+- [ ] 真机验证：beta 清单可读 → 切 beta 检查 → 发 beta.2 能升级 → 切回正式版提示降级
+- [ ] 发布 v0.3.0-beta.1（pre-release）
+
 ## 每次发版的固定动作
 
 ```bash

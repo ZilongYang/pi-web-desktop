@@ -71,6 +71,13 @@ pub struct Config {
     /// 主窗口上次的位置与大小（物理像素），由 `window_state` 在移动/缩放/关窗时维护
     #[serde(default)]
     pub window: Option<WindowGeometry>,
+    /// 更新通道："stable"（默认）| "beta"。见 docs/PLAN-2026-11-03-channels.md
+    #[serde(default = "default_update_channel")]
+    pub update_channel: String,
+}
+
+fn default_update_channel() -> String {
+    "stable".to_string()
 }
 
 /// 主窗口几何（物理像素）：`x/y` 是窗口外框左上角，`width/height` 是内容区尺寸。
@@ -108,6 +115,7 @@ impl Default for Config {
             inherit_login_shell_path: true,
             zoom: 1.0,
             window: None,
+            update_channel: default_update_channel(),
         }
     }
 }

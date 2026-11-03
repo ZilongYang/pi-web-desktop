@@ -9,7 +9,10 @@
 //!
 //! 编辑菜单用 `PredefinedMenuItem`，走 AppKit 的标准 selector，快捷键和系统行为都一致。
 
-use tauri::menu::{AboutMetadata, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu};
+use tauri::menu::{
+    AboutMetadata, CheckMenuItem, CheckMenuItemBuilder, Menu, MenuItemBuilder, PredefinedMenuItem,
+    Submenu,
+};
 use tauri::{AppHandle, Manager};
 
 pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
@@ -24,7 +27,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         let about_metadata = AboutMetadata {
             name: Some("Pi Web Desktop".to_string()),
             version: Some(package.version.to_string()),
-            credits: Some(about_credits(&bundled)),
+            credits: Some(about_credits(&bundled, crate::update::current_channel(app))),
             copyright: None,
             authors: None,
             ..Default::default()
@@ -131,6 +134,23 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let devtools = MenuItemBuilder::with_id("devtools", "开发者工具")
         .accelerator("CmdOrCtrl+Alt+I")
         .build(app)?;
+
+    // 更新通道（正式版 / 测试版 beta），见 docs/PLAN-2026-11-03-channels.md
+    let channel = crate::update::current_channel(app);
+    let channel_stable = CheckMenuItemBuilder::with_id("channel_stable", "正式版")
+        .checked(channel == crate::update::CHANNEL_STABLE)
+        .build(app)?;
+    let channel_beta = CheckMenuItemBuilder::with_id("channel_beta", "测试版 beta（预发布）")
+        .checked(channel == crate::update::CHANNEL_BETA)
+        .build(app)?;
+    let channel_menu = Submenu::with_items(
+        app,
+        "更新通道",
+        true,
+        &[&channel_stable, &channel_beta],
+    )?;
+    *CHANNEL_ITEMS.lock().unwrap() = Some((channel_stable, channel_beta));
+
     let piweb_menu = Submenu::with_items(
         app,
         "Pi Web",
@@ -140,6 +160,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &restart,
             &check_update,
             &check_piweb,
+            &channel_menu,
             &PredefinedMenuItem::separator(app)?,
             &open_browser,
             &copy_url,
@@ -158,10 +179,25 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     Ok(menu)
 }
 
+/// 通道勾选项的句柄（菜单只构建一次，切换后直接改勾选状态）。
+static CHANNEL_ITEMS: std::sync::Mutex<Option<(CheckMenuItem<tauri::Wry>, CheckMenuItem<tauri::Wry>)>> =
+    std::sync::Mutex::new(None);
+
+/// 按当前通道刷新两个勾选项。
+pub fn refresh_channels(app: &AppHandle) {
+    let channel = crate::update::current_channel(app);
+    if let Ok(items) = CHANNEL_ITEMS.lock() {
+        if let Some((stable, beta)) = items.as_ref() {
+            let _ = stable.set_checked(channel == crate::update::CHANNEL_STABLE);
+            let _ = beta.set_checked(channel == crate::update::CHANNEL_BETA);
+        }
+    }
+}
+
 /// 「关于」面板的说明区（F15）：显示内置 pi-web / pi SDK / Node 版本。
 /// macOS 的 About 面板只支持 credits 这一个自由文本字段，所以四个版本号压在这里。
 #[cfg(target_os = "macos")]
-fn about_credits(versions: &crate::update::BundledVersions) -> String {
+fn about_credits(versions: &crate::update::BundledVersions, channel: &str) -> String {
     let or_unknown = |value: &str| {
         if value.is_empty() {
             "?".to_string()
@@ -173,10 +209,11 @@ fn about_credits(versions: &crate::update::BundledVersions) -> String {
         return "内置版本信息读取失败（见日志）。".to_string();
     }
     format!(
-        "内置 pi-web {} · pi SDK {} · Node {}",
+        "内置 pi-web {} · pi SDK {} · Node {} · 更新通道：{}",
         or_unknown(&versions.pi_web),
         or_unknown(&versions.pi_sdk),
         or_unknown(&versions.node),
+        crate::update::channel_label(channel),
     )
 }
 
@@ -193,6 +230,14 @@ pub fn on_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
             }
         }
         "check_update" => crate::update::manual_check_all(app),
+        "channel_stable" => {
+            crate::update::switch_channel(app, crate::update::CHANNEL_STABLE);
+            refresh_channels(app);
+        }
+        "channel_beta" => {
+            crate::update::switch_channel(app, crate::update::CHANNEL_BETA);
+            refresh_channels(app);
+        }
         "check_piweb_update" => crate::hotupdate::manual_check(app),
         "open_browser" => {
             if let Some(url) = crate::current_url(app) {
@@ -256,9 +301,10 @@ mod tests {
     #[test]
     fn about_credits_lists_bundled_versions() {
         assert_eq!(
-            about_credits(&versions()),
-            "内置 pi-web 0.14.2 · pi SDK 1.5.0 · Node 22.23.4"
+            about_credits(&versions(), crate::update::CHANNEL_STABLE),
+            "内置 pi-web 0.14.2 · pi SDK 1.5.0 · Node 22.23.4 · 更新通道：正式版"
         );
+        assert!(about_credits(&versions(), crate::update::CHANNEL_BETA).ends_with("测试版 beta"));
     }
 
     #[test]
@@ -268,7 +314,8 @@ mod tests {
             node: String::new(),
             ..versions()
         };
-        assert_eq!(about_credits(&partial), "内置 pi-web 0.14.2 · pi SDK ? · Node ?");
+        assert!(about_credits(&partial, crate::update::CHANNEL_STABLE)
+            .starts_with("内置 pi-web 0.14.2 · pi SDK ? · Node ?"));
     }
 
     #[test]
@@ -277,6 +324,6 @@ mod tests {
             app: "0.2.9".to_string(),
             ..Default::default()
         };
-        assert!(about_credits(&empty).contains("读取失败"));
+        assert!(about_credits(&empty, crate::update::CHANNEL_STABLE).contains("读取失败"));
     }
 }

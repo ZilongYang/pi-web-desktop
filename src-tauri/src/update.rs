@@ -120,6 +120,15 @@ pub fn compare_versions_public(a: &str, b: &str) -> std::cmp::Ordering {
 
 /// 数值化比较 `1.10.0 > 1.9.0`。返回 std::cmp::Ordering。
 fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
+    // 优先按 semver 比较：这样预发布版本顺序才对（0.3.0-beta.2 < 0.3.0 < 0.3.1），
+    // 通道切换的「降级」判断依赖这个。
+    fn parse(value: &str) -> Option<semver::Version> {
+        semver::Version::parse(value.trim().trim_start_matches('v')).ok()
+    }
+    if let (Some(left), Some(right)) = (parse(a), parse(b)) {
+        return left.cmp(&right);
+    }
+    // 非标准版本号（历史遗留串）回落到数字分段比较
     fn parts(value: &str) -> Vec<u64> {
         value
             .trim_start_matches('v')
@@ -331,12 +340,199 @@ pub fn silent_check(app: &tauri::AppHandle) {
 use tauri::{Emitter, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_updater::UpdaterExt;
 
+// ---------------------------------------------------------------- 更新通道
+// 方案见 docs/PLAN-2026-11-03-channels.md：
+//   正式版 -> tauri.conf.json 里的默认端点（releases/latest，GitHub 自动忽略预发布）
+//   测试版 -> 固定 tag `channel-beta` 的 Release 里那份 latest.json（CI 每次发 beta 时覆盖上传）
+
+pub const CHANNEL_STABLE: &str = "stable";
+pub const CHANNEL_BETA: &str = "beta";
+const BETA_MANIFEST_URL: &str =
+    "https://github.com/ZilongYang/pi-web-desktop/releases/download/channel-beta/latest.json";
+
+fn normalize_channel(raw: &str) -> &'static str {
+    if raw == CHANNEL_BETA {
+        CHANNEL_BETA
+    } else {
+        CHANNEL_STABLE
+    }
+}
+
+/// 当前通道（config.json 的 `update_channel`）。
+pub fn current_channel(app: &tauri::AppHandle) -> &'static str {
+    normalize_channel(&crate::sidecar::Config::load(app).update_channel)
+}
+
+pub fn channel_label(channel: &str) -> &'static str {
+    if normalize_channel(channel) == CHANNEL_BETA {
+        "测试版 beta"
+    } else {
+        "正式版"
+    }
+}
+
+/// 通道对应的清单地址；None = 用 tauri.conf.json 的默认端点（正式版）。
+fn endpoint_for(channel: &str) -> Option<&'static str> {
+    if normalize_channel(channel) == CHANNEL_BETA {
+        Some(BETA_MANIFEST_URL)
+    } else {
+        None
+    }
+}
+
+/// 按通道构造 updater。
+/// `allow_any_version = true` 时允许「降级」（通道切换用：默认比较器只认更高版本）。
+fn build_updater(
+    app: &tauri::AppHandle,
+    allow_any_version: bool,
+) -> Result<tauri_plugin_updater::Updater, String> {
+    let channel = current_channel(app);
+    let mut builder = app.updater_builder();
+    if let Some(endpoint) = endpoint_for(channel) {
+        let url: tauri::Url = endpoint.parse().map_err(|error| format!("{error}"))?;
+        builder = builder.endpoints(vec![url]).map_err(|error| error.to_string())?;
+    }
+    if allow_any_version {
+        builder = builder.version_comparator(|current, remote| remote.version != current);
+    }
+    builder.build().map_err(|error| error.to_string())
+}
 
 fn check_app_update_sync(
     app: &tauri::AppHandle,
 ) -> Result<Option<tauri_plugin_updater::Update>, String> {
-    let updater = app.updater().map_err(|error| error.to_string())?;
+    let updater = build_updater(app, false)?;
     tauri::async_runtime::block_on(async { updater.check().await.map_err(|error| error.to_string()) })
+}
+
+fn check_any_app_update_sync(
+    app: &tauri::AppHandle,
+) -> Result<Option<tauri_plugin_updater::Update>, String> {
+    let updater = build_updater(app, true)?;
+    tauri::async_runtime::block_on(async { updater.check().await.map_err(|error| error.to_string()) })
+}
+
+/// 通道探针（`PIWEB_CHANNEL_PROBE=beta|stable` 时由 main.rs 调用）：
+/// 按指定通道检查一次更新（**只查不装**），写日志后退出。
+/// 用途：在不需要点菜单、也不会触发下载的环境里验证「端点选择 + 版本比对」。
+pub fn probe_channel(app: &tauri::AppHandle) {
+    let raw = std::env::var("PIWEB_CHANNEL_PROBE").unwrap_or_else(|_| CHANNEL_STABLE.to_string());
+    let channel = normalize_channel(&raw);
+    let label = channel_label(channel);
+    crate::logging::line("update-probe", &format!("通道={label} 清单={:?}", endpoint_for(channel)));
+    let result = build_updater(app, false).and_then(|updater| {
+        tauri::async_runtime::block_on(async { updater.check().await.map_err(|e| e.to_string()) })
+    });
+    match result {
+        Ok(Some(update)) => crate::logging::line(
+            "update-probe",
+            &format!("发现 v{}（当前 v{}）", update.version, env!("CARGO_PKG_VERSION")),
+        ),
+        Ok(None) => crate::logging::line(
+            "update-probe",
+            &format!("已是最新（当前 v{}）", env!("CARGO_PKG_VERSION")),
+        ),
+        Err(error) => crate::logging::line("update-probe", &format!("检查失败：{error}")),
+    }
+    app.exit(0);
+}
+
+/// 切换更新通道（菜单「更新通道」用）。
+///
+/// 写配置后立刻按新通道检查一次：
+/// - 目标版本 ≠ 当前版本（**包括降级**）→ 弹窗确认后走现有的下载进度窗 + 安装 + 重启；
+/// - 版本相同 → 只提示已切换。
+pub fn switch_channel(app: &tauri::AppHandle, channel: &str) {
+    let channel = normalize_channel(channel);
+    let label = channel_label(channel);
+    let mut config = crate::sidecar::Config::load(app);
+    if config.update_channel == channel {
+        crate::logging::line("update", &format!("更新通道已是{label}，重新检查一次"));
+    } else {
+        config.update_channel = channel.to_string();
+        config.save(app);
+        crate::logging::line("update", &format!("更新通道切换为{label}"));
+    }
+
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let checked = check_any_app_update_sync(&handle);
+        match checked {
+            Ok(Some(update)) => {
+                let current = env!("CARGO_PKG_VERSION").to_string();
+                let target = update.version.clone();
+                let downgrade = compare_versions(&target, &current) == std::cmp::Ordering::Less;
+                crate::logging::line(
+                    "update",
+                    &format!(
+                        "{}通道：{} -> {}{}",
+                        label,
+                        current,
+                        target,
+                        if downgrade { "（降级重装）" } else { "" }
+                    ),
+                );
+                let accepted = if headless() {
+                    true
+                } else {
+                    let hint = if downgrade {
+                        "这个版本比当前低，会重新安装一版较旧的正式版（覆盖安装）。\n\n"
+                    } else {
+                        ""
+                    };
+                    handle
+                        .dialog()
+                        .message(format!(
+                            "已切换到{label}。\n\n\n{hint}检测到 {label} 版本 v{target}（当前 v{current}）。\n\n                             会下载整个应用包（约 130MB，含内置 pi-web 与 Node）并覆盖安装，完成后自动重启。\n                             有正在跑的任务请先保存。",
+                        ))
+                        .title(format!("Pi Web Desktop · 切换到{label}"))
+                        .buttons(MessageDialogButtons::OkCancelCustom(
+                            "下载并安装".to_string(),
+                            "只切换，先不装".to_string(),
+                        ))
+                        .blocking_show()
+                };
+                if accepted {
+                    if let Err(error) = install_app_update(&handle, update) {
+                        crate::logging::line("update", &format!("通道切换安装失败：{error}"));
+                    }
+                }
+            }
+            Ok(None) => {
+                crate::logging::line("update", &format!("{label}通道已是最新"));
+                if !headless() {
+                    handle
+                        .dialog()
+                        .message(format!(
+                            "已切换到{label}。\n\n当前 v{} 在这个通道上已是最新。",
+                            env!("CARGO_PKG_VERSION")
+                        ))
+                        .title(format!("Pi Web Desktop · 切换到{label}"))
+                        .buttons(MessageDialogButtons::OkCancelCustom(
+                            "好的".to_string(),
+                            "关闭".to_string(),
+                        ))
+                        .blocking_show();
+                }
+            }
+            Err(error) => {
+                crate::logging::line("update", &format!("{label}通道检查失败：{error}"));
+                if !headless() {
+                    handle
+                        .dialog()
+                        .message(format!(
+                            "已切换到{label}，但检查更新失败：\n\n{error}\n\n可以稍后再点「检查应用更新…」。",
+                        ))
+                        .title("Pi Web Desktop · 切换更新通道")
+                        .buttons(MessageDialogButtons::OkCancelCustom(
+                            "知道了".to_string(),
+                            "关闭".to_string(),
+                        ))
+                        .blocking_show();
+                }
+            }
+        }
+    });
 }
 
 fn install_app_update(
@@ -570,6 +766,39 @@ pub fn manual_check_all(app: &tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalizes_update_channel() {
+        assert_eq!(normalize_channel("beta"), CHANNEL_BETA);
+        assert_eq!(normalize_channel("stable"), CHANNEL_STABLE);
+        // 脏值/旧配置一律回落到正式版，避免出现「未知通道」这种半挂状态
+        assert_eq!(normalize_channel("dev"), CHANNEL_STABLE);
+        assert_eq!(normalize_channel(""), CHANNEL_STABLE);
+    }
+
+    #[test]
+    fn beta_channel_points_at_fixed_manifest() {
+        assert_eq!(endpoint_for(CHANNEL_BETA), Some(BETA_MANIFEST_URL));
+        assert_eq!(endpoint_for(CHANNEL_STABLE), None); // 正式版用 tauri.conf 的默认端点
+        assert!(BETA_MANIFEST_URL.ends_with("/releases/download/channel-beta/latest.json"));
+    }
+
+    #[test]
+    fn channel_switch_detects_downgrade() {
+        // 通道切换时「目标版本更低」要能识别出来 —— 这是「允许降级重装」的判断依据
+        assert_eq!(
+            compare_versions("0.2.11", "0.3.0-beta.1"),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_versions("0.3.0-beta.2", "0.3.0-beta.1"),
+            std::cmp::Ordering::Greater
+        );
+        assert_eq!(
+            compare_versions("0.3.0", "0.3.0-beta.2"),
+            std::cmp::Ordering::Greater
+        );
+    }
 
     #[test]
     fn compares_versions_numerically() {

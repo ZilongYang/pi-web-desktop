@@ -739,6 +739,14 @@ fn main() {
                     update::manual_check_all(&handle);
                 });
             }
+            // 通道探针（验证「正式版/测试版」通道选择）：设 PIWEB_CHANNEL_PROBE=beta|stable
+            if std::env::var("PIWEB_CHANNEL_PROBE").is_ok() {
+                let probe_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    update::probe_channel(&probe_handle);
+                });
+            }
             // 窗口探针（scripts/smoke-app.mjs 用）：3 秒后打印几何、落盘、退出。
             // 用来在没有 GUI 自动化权限的环境里验证「App 能启动 + 窗口几何存取」，常规启动不受影响。
             if std::env::var("PIWEB_WINDOW_PROBE").ok().as_deref() == Some("1") {

@@ -57,7 +57,7 @@ cargo build                 # 调试构建
 
 | 壳版本 | 内置 pi-web | 内置 Node |
 |---|---|---|
-| 0.3.2-beta.1 | 0.15.0 | 22.23.4 |
+| 0.3.2 | 0.15.0 | 22.23.4 |
 
 发版流程与版本号规则见 [docs/RELEASE-PROCESS.md](docs/RELEASE-PROCESS.md)（默认只递增 patch：`0.3.1-beta.1` → `0.3.1` → `0.3.2-beta.1`）。
 
@@ -77,7 +77,10 @@ cargo build                 # 调试构建
   "attach_policy": "same-version",
   "proxy": null,
   "extra_env": {},
-  "pi_coding_agent_dir": null
+  "pi_coding_agent_dir": null,
+  "zoom": 1.0,
+  "update_channel": "stable",
+  "window": { "x": 466, "y": 285, "width": 1470, "height": 1011 }
 }
 ```
 
@@ -85,6 +88,9 @@ cargo build                 # 调试构建
 - `attach_policy`：`same-version`（默认，同版本就附着本机已有实例）/ `never`（永远起自己的）。
 - `proxy`：GUI 启动拿不到你终端里的 `HTTPS_PROXY`。需要让 pi-web 的服务端请求走 Clash，就填 `"http://127.0.0.1:7890"`（会同时注入 `NO_PROXY=localhost,127.0.0.1`）。
 - `pi_coding_agent_dir`：默认 `null`，即共享 `~/.pi/agent`。
+- `zoom`：页面缩放（菜单「视图」维护）。
+- `update_channel`：`stable`（默认）/ `beta`（菜单「更新通道」维护）。
+- `window`：主窗口上次的位置与大小（物理像素，自动维护；拔掉外接屏后会自动居中）。
 
 日志：`~/Library/Logs/com.zilong.piweb.desktop/sidecar.log`（菜单「打开日志目录」）。
 
@@ -100,7 +106,9 @@ cargo build                 # 调试构建
   实测结果：侧车里 `node`/`pnpm`/`mnemon`/`git`/`python3`/`go`/`deno` 的解析结果与终端**完全一致**。想换规则：`config.json` 里 `inherit_login_shell_path: false` 就只用兜底目录；删掉上面的缓存文件可强制重新探测。
 - **TCC 授权**：项目放在 `~/Documents`、`~/Desktop`、`~/Downloads` 时，首次访问会弹系统授权，允许后才会出现在文件树里。
 - **`pi-web stop` 会停掉桌面版的服务**：因为共用同一套 run record；健康监控会弹窗，点「重启服务」即可。
-- **导出会话 HTML 暂时不可用（pi-web 0.14.2 + pi SDK 1.5.0 的上游不兼容）**：点「导出」会报 `Failed to patch exported HTML: sortChildren expected 1 match, found 0`。这是服务端的补丁逻辑与新版 SDK 模板对不上（细节见 [ROADMAP · B2](ROADMAP.md)），与本壳无关；临时可用命令行 `pi --export <session.jsonl> out.html` 导出，或等方案定稿后修复。
+- **导出会话 HTML**：0.3.2 起随 pi-web 0.15.0 已恢复正常（上游修掉了旧版补丁逻辑）。
+- **退出确认覆盖范围**：⌘Q / 菜单「退出」/ 托盘「退出」都会弹确认；但 Dock 右键「退出」和系统关机/注销
+  走的是 AppKit terminate，目前**拦不住**（后续若需要可自己实现 `applicationShouldTerminate`）。
 - **首次启动会重写 `Resources/pi-web/app/node_modules/@agegr/pi-web/.next/prerender-manifest.json`**（pi-web launcher 轮换 preview 密钥的安全设计）。之后 `codesign --deep --strict` 会因这一个数据文件报签名不符；签名校验请在本机首次运行**之前**做，或改用 Developer ID + 重新签名的发布流程。
 - **附着模式**：连的是别人启动的 server，退出时不会杀它；桌面窗口与浏览器窗口的 localStorage 互不共享（WKWebView 的数据目录按 app 隔离）。
 
@@ -112,7 +120,7 @@ cargo build                 # 调试构建
 
 | 菜单 | 内容 |
 |---|---|
-| Pi Web Desktop | 关于 / 服务 / 隐藏 / 退出（⌘Q） |
+| Pi Web Desktop | 关于 / **检查应用更新…** / 服务 / 隐藏 / **退出（⌘Q，会先确认）** |
 | 文件 | 关闭窗口（⌘W） |
 | 编辑 | 撤销 ⌘Z / 重做 ⇧⌘Z / 剪切 ⌘X / 拷贝 ⌘C / 粘贴 ⌘V / 全选 ⌘A |
 | **视图** | **放大 ⌘= / 缩小 ⌘- / 实际大小 ⌘0 / 进入全屏**；档位 50%–300%，会记住（写进 `config.json` 的 `zoom`） |
@@ -122,22 +130,24 @@ cargo build                 # 调试构建
 
 页面缩放只影响显示，不影响终端面板里执行的命令。
 
+**菜单栏托盘**：菜单栏常驻 π 图标（模板图，深浅色自适应），菜单包含
+显示 / 隐藏主窗口 · 在浏览器中打开 · 检查应用更新… · 打开日志目录 · 退出（同样会确认）。
+**点窗口关闭按钮 = 隐藏到菜单栏**（App 不退出、pi-web 后台任务继续跑）；点 Dock 图标可唤回窗口。
+
 ## 更新
 
-三层机制，都是「菜单 → 检查更新…」的一部分：
+**只有一层：应用自更新**（整个 `.app`：壳 + 内置 pi-web + pi SDK + Node 一起换）。
 
-| 层 | 更新什么 | 怎么做 | 失败时 |
+| 时机 | 没有新版 | 有新版 | 失败 |
 |---|---|---|---|
-| **L1 检测** | 版本认知 | 每次启动查 npm registry，落后就提示（同一版本只提醒一次） | 静默 |
-| **L2 应用自更新** | 整个 `.app`（含内置 pi-web / pi SDK / Node） | Tauri updater：下载 `.app.tar.gz` → 校验 minisign 签名 → 替换 → 重启 | 报错并保持旧版本 |
-| ~~L3 pi-web 热更新~~ | **已取消**（2026-11-04） | pi-web 版本与 App 一对一固定，随发版升级；见 [PLAN-2026-11-04-drop-l3.md](docs/PLAN-2026-11-04-drop-l3.md) | — |
+| 启动后 20 秒（静默） | 只写日志，**不弹窗** | 弹一次下载确认（同一版本只提醒一次） | 只写日志 |
+| 运行期每 6 小时（静默） | 只写日志 | 弹一次（同上） | 只写日志 |
+| 菜单 / 托盘「检查应用更新…」 | 弹「已是最新」（含当前版本/通道/内置版本） | 弹「下载并安装 / 跳过」 | 弹失败原因 |
 
-细节：
-
-- 菜单「检查应用更新…」只检查应用本身；应用启动时查一次、运行期间每 6 小时再查一次。
-- **每次启动都会静默检查**（应用更新 20s 后、pi-web 10s 后）；同一个版本只提醒一次，不会每次开机都弹窗。
+- 更新通道：**正式版**（`releases/latest`）/ **测试版 beta**（固定 `channel-beta` 清单）；切回正式版时若当前更高会提示降级重装。
+- **pi-web 版本随 App 固定**（2026-11-04 取消 L3 热更新）：见 [PLAN-2026-11-04-drop-l3.md](docs/PLAN-2026-11-04-drop-l3.md)。
 - pi 的扩展/插件/skills 不需要壳参与：pi-web 的插件面板自己就能装/升级。
-- 开发/演练用环境变量：`PIWEB_UPDATE_HEADLESS=1`（不弹窗、自动确认）、`PIWEB_SIDECAR_MANIFEST_URL`（指向本地假 Release）、`PIWEB_UPDATE_CHECK_ON_STARTUP=1`（启动 3s 后自动跑一次检查）。
+- 测试用环境变量：`PIWEB_UPDATE_HEADLESS=1`（不弹窗、自动确认）、`PIWEB_PERIODIC_CHECK_SECS`（覆盖定期检查间隔）、`PIWEB_UPDATE_CHECK_ON_STARTUP=1`（启动 3s 后跑一次手动检查）。
 
 ## 签名与发布
 
@@ -179,7 +189,8 @@ updater 密钥（minisign）与 Apple 签名无关：
 sidecar.json           # 唯一版本源（pi-web / node）
 scripts/               # fetch-sidecar（装+裁剪+manifest）、prune、smoke
 ui/index.html          # 本地 splash 页（唯一能用 Tauri IPC 的页面）
-src-tauri/src/         # main（状态机/窗口/菜单/命令）、sidecar、probe、discovery、logging
+src-tauri/src/         # main（状态机/窗口/菜单）、sidecar、tray（托盘）、quit_guard（退出确认）、
+                       # window_state（窗口几何）、update（L2+通道）、probe、discovery、logging
 docs/PLAN-2026-11-01.md# 方案原文（批准版）+ 事后补记
 ```
 
@@ -188,7 +199,11 @@ docs/PLAN-2026-11-01.md# 方案原文（批准版）+ 事后补记
 总入口：[docs/README.md](docs/README.md)（每份文档的作用与更新规则）
 
 - **路线图 / Backlog**：[ROADMAP.md](ROADMAP.md) —— 现在做到哪、接下来做什么（新需求先记这里）
-- 方案与实施记录：[PLAN-2026-11-01.md](docs/PLAN-2026-11-01.md)（初版壳）、[PLAN-2026-11-02-L2L3.md](docs/PLAN-2026-11-02-L2L3.md)（更新机制）
+- 发版流程与版本号规则：[RELEASE-PROCESS.md](docs/RELEASE-PROCESS.md)
+- 方案记录：初版壳 [PLAN-2026-11-01](docs/PLAN-2026-11-01.md)、更新机制 [PLAN-2026-11-02-L2L3](docs/PLAN-2026-11-02-L2L3.md)、
+  通道 [PLAN-2026-11-03-channels](docs/PLAN-2026-11-03-channels.md)、
+  侧车清单 [PLAN-2026-11-03-sidecar-manifest](docs/PLAN-2026-11-03-sidecar-manifest.md)、
+  托盘 [PLAN-2026-11-03-tray](docs/PLAN-2026-11-03-tray.md)、**取消 L3** [PLAN-2026-11-04-drop-l3](docs/PLAN-2026-11-04-drop-l3.md)
 - 验收与回归：[QA-2026-11-01.md](docs/QA-2026-11-01.md)
 - 发版清单：[RELEASE-CHECKLIST-0.2.0.md](docs/RELEASE-CHECKLIST-0.2.0.md)
 

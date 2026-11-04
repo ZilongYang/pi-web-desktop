@@ -194,8 +194,15 @@
 - [x] pi-web 升到 **0.15.0**（SDK 仍 1.5.0 / Node 22.23.4）：折叠补丁已应用；**导出补丁判定"上游已不再使用字符串补丁"，自动跳过**（等于上游修好了 B2）
 - [x] `npm run smoke` 通过（导出 HTML 278.9 KB）
 - [x] 新增运行期定期检查：启动查一次 + 每 6 小时查（`PIWEB_PERIODIC_CHECK_SECS` 可覆盖）
-- [ ] `cargo test` / `npm run smoke:app`；本机安装验证（导出、折叠、托盘、退出确认、定期检查日志）
-- [ ] 发布 v0.3.2-beta.1 → 验收后转正 0.3.2
+- [x] `cargo test` / `npm run smoke:app`；本机验收通过（导出、折叠、托盘、⌘Q 确认、定期检查日志、手动检查反馈）
+- [x] 发布 v0.3.2-beta.1（Pre-release；`channel-beta` → 0.3.2-beta.1；正式版通道仍 0.3.1）
+
+## 0.3.2（正式版：取消 L3 / pi-web 0.15.0 / 定期检查）
+
+- [x] 由 `0.3.2-beta.1` 转正（仅版本号变化）；`cargo test` 14 项、`smoke`、`smoke:app` 全过
+- [x] 本机安装 0.3.2 并运行（`GET / → 200`），签名封印有效
+- [x] 发布 v0.3.2：ci + release 双绿；Release = **Latest**；`latest.json` → 0.3.2；beta 通道仍 0.3.2-beta.1
+- [x] 发布资产核对：dmg / zip / updater 包 + sig / latest.json / SHA256SUMS（**不再有侧车包**）
 
 ## 每次发版的固定动作
 

@@ -178,6 +178,14 @@
       已改为复制到 `~/Applications/Pi-Web-Desktop-Smoke.app`，并**新增断言：侧车真的在监听端口（HTTP 可连）**
 - [x] 用户本机验收通过（托盘/关窗隐藏/⌘Q 确认/退出确认/检查更新单弹窗）
 
+## 0.3.1（正式版：托盘 / 侧车清单独立 / 退出确认）
+
+- [x] 由 `0.3.1-beta.2` 转正（代码不变，仅去掉预发布后缀；四处版本号）
+- [x] 发版前三件套：`cargo test` 17 项、`npm run smoke`、`npm run smoke:app`（这次冒烟真验证了侧车端口可连）
+- [x] 构建 + ad-hoc 整包签名校验通过；本机安装 0.3.1 并运行（`GET / → 200`）
+- [x] 发布 v0.3.1：ci + release 双绿；Release = **Latest**；`latest.json` → 0.3.1；`channel-beta` 仍 0.3.1-beta.2
+- [x] 发布后核验：线上 `releases/latest/download/latest.json` = 0.3.1
+
 ## 每次发版的固定动作
 
 ```bash

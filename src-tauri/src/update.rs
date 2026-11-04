@@ -559,6 +559,7 @@ pub fn silent_app_check(app: &tauri::AppHandle) {
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(20));
         match check_app_update_sync(&handle) {
+            // 静默：没有新版只写日志，绝不弹窗
             Ok(Some(update)) => notify_app_update(&handle, update),
             Ok(None) => crate::logging::line("update", "应用已是最新"),
             Err(error) => crate::logging::line("update", &format!("应用更新检查失败：{error}")),
@@ -631,8 +632,46 @@ pub fn manual_check_all(app: &tauri::AppHandle) {
                     }
                 }
             }
-            Ok(None) => crate::logging::line("update", "应用已是最新"),
-            Err(error) => crate::logging::line("update", &format!("应用更新检查失败：{error}")),
+            Ok(None) => {
+                crate::logging::line("update", "应用已是最新");
+                // 手动检查必须给反馈（0.3.2-beta.1 的疏漏：删掉 L3 后这里变成"点了没反应"）
+                if !headless() {
+                    let bundled = bundled_versions(&handle);
+                    let channel = crate::update::channel_label(current_channel(&handle));
+                    handle
+                        .dialog()
+                        .message(format!(
+                            "已是最新。\n\n当前版本 v{}（{}通道）\n内置 pi-web {} · pi SDK {} · Node {}",
+                            env!("CARGO_PKG_VERSION"),
+                            channel,
+                            if bundled.pi_web.is_empty() { "?" } else { &bundled.pi_web },
+                            if bundled.pi_sdk.is_empty() { "?" } else { &bundled.pi_sdk },
+                            if bundled.node.is_empty() { "?" } else { &bundled.node },
+                        ))
+                        .title("Pi Web Desktop · 检查应用更新")
+                        .buttons(MessageDialogButtons::OkCancelCustom(
+                            "好的".to_string(),
+                            "关闭".to_string(),
+                        ))
+                        .blocking_show();
+                }
+            }
+            Err(error) => {
+                crate::logging::line("update", &format!("应用更新检查失败：{error}"));
+                if !headless() {
+                    handle
+                        .dialog()
+                        .message(format!(
+                            "检查失败：\n\n{error}\n\n可稍后重试；网络/代理问题详见日志（菜单「打开日志目录」）。",
+                        ))
+                        .title("Pi Web Desktop · 检查应用更新")
+                        .buttons(MessageDialogButtons::OkCancelCustom(
+                            "好的".to_string(),
+                            "关闭".to_string(),
+                        ))
+                        .blocking_show();
+                }
+            }
         }
     });
 }

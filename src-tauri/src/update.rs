@@ -1,14 +1,14 @@
-//! 更新检测（L1）：只查、只提示，不下载、不替换。
+//! 应用更新（L2，Tauri updater）+ 更新通道（正式版 / 测试版）。
 //!
-//! 为什么不做自动升级：pi-web / Node 都打包在已签名的 `.app` 里，替换要走
-//! Tauri updater（换整个 app，需要发布源 + 签名）或运行时侧车热更新（需要
-//! 侧车压缩包 + SHA256 校验 + 原子切换）。在那两层没搭起来之前，任何"自动下载"
-//! 都等于在用户机器上执行来历不明的代码，所以这里只做到提示 + 一键复制升级命令。
+//! 2026-11-04 起**取消了 L3（只换 pi-web 的热更新）**：pi-web 版本与壳版本一对一
+//! 固定，随 App 一起发布（见 docs/PLAN-2026-11-04-drop-l3.md）。
+//! 因此这里不再有「查 npm 上游 pi-web 版本」的逻辑——那种提示已经无法转化为可用的更新。
 //!
-//! 数据源用 npm registry 的 `@agegr%2Fpi-web/latest` —— pi-web 自己的
-//! `/api/app-update` 也是查这个（12h 缓存）。本应用注入了
-//! `PI_WEB_SKIP_VERSION_CHECK=1` 关掉它自带的提示，因为它给的更新方式是
-//! `npm install -g pi-web`，对内置副本无效；提示语气与动作由壳统一负责。
+//! 检查时机：
+//!   · 启动后 20 秒静默检查一次（每次启动都查）
+//!   · 运行期间每 6 小时再查一次（`PIWEB_PERIODIC_CHECK_SECS` 可覆盖，测试用）
+//!   · 菜单 / 托盘「检查应用更新…」手动触发
+//! 同一版本只提醒一次（`update-state.json` 的 `notifiedAppVersion`）。
 
 use serde::{Deserialize, Serialize};
 use std::process::{Command, Stdio};
@@ -16,11 +16,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
-const REGISTRY_URL: &str = "https://registry.npmjs.org/@agegr%2Fpi-web/latest";
-const FETCH_TIMEOUT_SECS: &str = "8";
-
-/// 升级命令：放在提示里可一键复制。
-const UPGRADE_COMMAND: &str = "cd ~/zWork/ai/pi-web-desktop && npm run sidecar && npm run build";
 
 #[derive(Debug, Clone, Default)]
 pub struct BundledVersions {
@@ -33,14 +28,11 @@ pub struct BundledVersions {
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CheckState {
-    last_checked_at: Option<u64>,
     #[serde(default)]
     last_app_checked_at: Option<u64>,
     /// 已经提醒过的版本（同一版本只弹一次，避免每次启动都打扰）
     #[serde(default)]
     notified_app_version: Option<String>,
-    #[serde(default)]
-    notified_piweb_version: Option<String>,
 }
 
 fn now_secs() -> u64 {
@@ -148,77 +140,6 @@ fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
     std::cmp::Ordering::Equal
 }
 
-/// 用 curl 查 npm registry（GUI 进程没有 shell，也不需要额外的 TLS 依赖）。
-/// 系统 curl 在 macOS 与 Windows 10+ 都有；配置了代理就带上 `--proxy`。
-fn fetch_latest_pi_web(proxy: Option<&str>) -> Result<String, String> {
-    // 测试钩子：可以假装 registry 上是某个版本，用来验证"有新版"的提示文案
-    if let Ok(fake) = std::env::var("PIWEB_UPDATE_FAKE_LATEST") {
-        if !fake.trim().is_empty() {
-            crate::logging::line("update", &format!("（测试钩子）假装最新版本为 {fake}"));
-            return Ok(fake.trim().to_string());
-        }
-    }
-    let mut command = Command::new("curl");
-    command
-        .args(["-s", "--max-time", FETCH_TIMEOUT_SECS, "--fail", "-H", "Accept: application/json"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    if let Some(proxy) = proxy.filter(|value| !value.trim().is_empty()) {
-        command.args(["--proxy", proxy]);
-    }
-    command.arg(REGISTRY_URL);
-
-    let output = command.output().map_err(|error| format!("无法执行 curl：{error}"))?;
-    if !output.status.success() {
-        return Err(format!("curl 退出码 {:?}", output.status.code()));
-    }
-    let body: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("registry 返回的不是 JSON：{error}"))?;
-    body.get("version")
-        .and_then(|value| value.as_str())
-        .map(|value| value.to_string())
-        .ok_or_else(|| "registry 返回里没有 version 字段".to_string())
-}
-
-fn upgrade_available(bundled: &BundledVersions, latest: &str) -> bool {
-    !bundled.pi_web.is_empty()
-        && !latest.is_empty()
-        && compare_versions(latest, &bundled.pi_web) == std::cmp::Ordering::Greater
-}
-
-fn build_message(bundled: &BundledVersions, latest: &Result<String, String>) -> (String, bool) {
-    let header = format!(
-        "内置 Pi Web Desktop {} · pi-web {} · pi SDK {} · Node {}",
-        bundled.app,
-        if bundled.pi_web.is_empty() { "?" } else { &bundled.pi_web },
-        if bundled.pi_sdk.is_empty() { "?" } else { &bundled.pi_sdk },
-        if bundled.node.is_empty() { "?" } else { &bundled.node },
-    );
-
-    match latest {
-        Ok(latest) if upgrade_available(bundled, latest) => (
-            format!(
-                "检测到新版 pi-web：{latest}（内置 {}）。\n\n{header}\n\n\
-                 pi SDK 由 pi-web 精确锁定，会跟着一起升级。\n\n\
-                 想现在就用上：菜单「Pi Web → 更新 pi-web…」，可以直接下载并切换 pi-web（只换 pi-web，不重装 App）。\n\
-                 或者重新构建整个 App（约 2 分钟）：\n\n\
-                 {UPGRADE_COMMAND}",
-                bundled.pi_web
-            ),
-            true,
-        ),
-        Ok(latest) => (
-            format!("已是最新。\n\n{header}\n\nnpm registry 上最新的 pi-web 是 {latest}。"),
-            false,
-        ),
-        Err(error) => (
-            format!("检查失败：{error}\n\n{header}\n\n（离线或被墙时属正常，可稍后再试）"),
-            false,
-        ),
-    }
-}
-
 /// 供菜单「复制服务地址」复用（原来只写日志）。
 pub fn copy_to_clipboard_public(text: &str) -> Result<(), String> {
     copy_to_clipboard(text)
@@ -249,95 +170,8 @@ fn copy_to_clipboard(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn show_dialog(app: &tauri::AppHandle, message: &str, can_copy: bool) {
-    crate::logging::line("update", &format!("提示内容：{message}"));
-    if std::env::var("PIWEB_UPDATE_HEADLESS").ok().as_deref() == Some("1") {
-        return;
-    }
-    let copy = app
-        .dialog()
-        .message(message.to_string())
-        .title("Pi Web Desktop · 检查 pi-web 更新")
-        .buttons(if can_copy {
-            MessageDialogButtons::OkCancelCustom("复制升级命令".to_string(), "知道了".to_string())
-        } else {
-            MessageDialogButtons::OkCancelCustom("好的".to_string(), "关闭".to_string())
-        })
-        .blocking_show();
-
-    if can_copy && copy {
-        match copy_to_clipboard(UPGRADE_COMMAND) {
-            Ok(()) => crate::logging::line("update", "升级命令已复制到剪贴板"),
-            Err(error) => crate::logging::line("update", &format!("复制失败：{error}")),
-        }
-    }
-}
-
-/// 手动检查（菜单触发）：不节流，总是弹结果。
-pub fn manual_check(app: &tauri::AppHandle) {
-    let handle = app.clone();
-    std::thread::spawn(move || {
-        let bundled = bundled_versions(&handle);
-        let proxy = crate::sidecar::Config::load(&handle).proxy;
-        crate::logging::line(
-            "update",
-            &format!("手动检查更新（内置 pi-web {}）", bundled.pi_web),
-        );
-        let latest = fetch_latest_pi_web(proxy.as_deref());
-        if let Ok(version) = latest.as_ref() {
-            let mut state = read_state(&handle);
-            state.last_checked_at = Some(now_secs());
-            write_state(&handle, &state);
-            crate::logging::line("update", &format!("npm 最新 pi-web：{version}"));
-        }
-        let (message, can_copy) = build_message(&bundled, &latest);
-        show_dialog(&handle, &message, can_copy);
-    });
-}
-
-/// 启动时的静默检查（npm 上的 pi-web）：**每次启动都查**；有新版才提示，失败不打扰。
-pub fn silent_check(app: &tauri::AppHandle) {
-    {
-        let mut state = read_state(app);
-        state.last_checked_at = Some(now_secs());
-        write_state(app, &state);
-    }
-
-    let handle = app.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_secs(10));
-        let bundled = bundled_versions(&handle);
-        let proxy = crate::sidecar::Config::load(&handle).proxy;
-        let latest = fetch_latest_pi_web(proxy.as_deref());
-        match latest {
-            Ok(version) if upgrade_available(&bundled, &version) => {
-                crate::logging::line(
-                    "update",
-                    &format!("发现新版 pi-web {version}（内置 {}）", bundled.pi_web),
-                );
-                let already = read_state(&handle)
-                    .notified_piweb_version
-                    .as_deref()
-                    == Some(version.as_str());
-                if already && !headless() {
-                    crate::logging::line("update", "这个 pi-web 版本已经提醒过，本次不再弹窗");
-                    return;
-                }
-                let mut state = read_state(&handle);
-                state.notified_piweb_version = Some(version.clone());
-                write_state(&handle, &state);
-                let (message, can_copy) = build_message(&bundled, &Ok(version));
-                show_dialog(&handle, &message, can_copy);
-            }
-            Ok(version) => crate::logging::line("update", &format!("已是最新（{version}）")),
-            Err(error) => crate::logging::line("update", &format!("静默检查失败：{error}")),
-        }
-    });
-}
-
 // ---------------------------------------------------------------- L2：应用自更新
 
-use tauri::{Emitter, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_updater::UpdaterExt;
 
 // ---------------------------------------------------------------- 更新通道
@@ -681,6 +515,43 @@ fn update_state_touch_app(app: &tauri::AppHandle) {
     write_state(app, &state);
 }
 
+/// 有新版时的提醒（启动静默检查与定期检查共用）。
+fn notify_app_update(handle: &tauri::AppHandle, update: tauri_plugin_updater::Update) {
+    crate::logging::line("update", &format!("应用有新版本 v{}", update.version));
+    // 同一版本只提醒一次：每次启动都查，但不用每次开机都弹同一个窗
+    let already = read_state(handle).notified_app_version.as_deref() == Some(update.version.as_str());
+    if already && !headless() {
+        crate::logging::line("update", "这个版本已经提醒过，本次不再弹窗");
+        return;
+    }
+    let mut state = read_state(handle);
+    state.notified_app_version = Some(update.version.clone());
+    write_state(handle, &state);
+
+    let accepted = if headless() {
+        true
+    } else {
+        handle
+            .dialog()
+            .message(format!(
+                "应用有新版本 v{}（当前 v{}）。\n\n更新会下载整个应用包（含内置 pi-web 与 Node），完成后自动重启。",
+                update.version,
+                env!("CARGO_PKG_VERSION")
+            ))
+            .title("Pi Web Desktop · 应用更新")
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "下载并安装".to_string(),
+                "稍后".to_string(),
+            ))
+            .blocking_show()
+    };
+    if accepted {
+        if let Err(error) = install_app_update(handle, update) {
+            crate::logging::line("update", &format!("应用更新失败：{error}"));
+        }
+    }
+}
+
 /// 启动后静默检查应用更新（**每次启动都查**，有更新才提示；不自动安装）。
 pub fn silent_app_check(app: &tauri::AppHandle) {
     update_state_touch_app(app);
@@ -688,45 +559,37 @@ pub fn silent_app_check(app: &tauri::AppHandle) {
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(20));
         match check_app_update_sync(&handle) {
-            Ok(Some(update)) => {
-                crate::logging::line("update", &format!("应用有新版本 v{}", update.version));
-                // 同一版本只提醒一次：每次启动都查，但不用每次开机都弹同一个窗
-                let already = read_state(&handle)
-                    .notified_app_version
-                    .as_deref()
-                    == Some(update.version.as_str());
-                if already && !headless() {
-                    crate::logging::line("update", "这个版本已经提醒过，本次不再弹窗");
-                    return;
-                }
-                let mut state = read_state(&handle);
-                state.notified_app_version = Some(update.version.clone());
-                write_state(&handle, &state);
-                let accepted = if headless() {
-                    true
-                } else {
-                    handle
-                        .dialog()
-                        .message(format!(
-                            "应用有新版本 v{}（当前 v{}）。\n\n更新会下载整个应用包（含内置 pi-web 与 Node），完成后自动重启。",
-                            update.version,
-                            env!("CARGO_PKG_VERSION")
-                        ))
-                        .title("Pi Web Desktop · 应用更新")
-                        .buttons(MessageDialogButtons::OkCancelCustom(
-                            "下载并安装".to_string(),
-                            "稍后".to_string(),
-                        ))
-                        .blocking_show()
-                };
-                if accepted {
-                    if let Err(error) = install_app_update(&handle, update) {
-                        crate::logging::line("update", &format!("应用更新失败：{error}"));
-                    }
-                }
-            }
+            Ok(Some(update)) => notify_app_update(&handle, update),
             Ok(None) => crate::logging::line("update", "应用已是最新"),
             Err(error) => crate::logging::line("update", &format!("应用更新检查失败：{error}")),
+        }
+    });
+}
+
+/// 运行期间的定期检查（默认 6 小时一次；沿用「同一版本只提醒一次」）。
+/// `PIWEB_PERIODIC_CHECK_SECS` 可覆盖间隔（测试用，最小 30 秒）。
+pub fn start_periodic_check(app: &tauri::AppHandle) {
+    let interval = std::env::var("PIWEB_PERIODIC_CHECK_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(6 * 60 * 60)
+        .max(30);
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        crate::logging::line(
+            "update",
+            &format!("运行期定期检查已启动（每 {interval} 秒检查一次应用更新）"),
+        );
+        loop {
+            std::thread::sleep(Duration::from_secs(interval));
+            crate::logging::line("update", "运行期定期检查：应用更新");
+            match check_app_update_sync(&handle) {
+                Ok(Some(update)) => notify_app_update(&handle, update),
+                Ok(None) => crate::logging::line("update", "定期检查：应用已是最新"),
+                Err(error) => {
+                    crate::logging::line("update", &format!("定期检查失败：{error}"))
+                }
+            }
         }
     });
 }
@@ -735,8 +598,7 @@ fn headless() -> bool {
     std::env::var("PIWEB_UPDATE_HEADLESS").ok().as_deref() == Some("1")
 }
 
-/// 菜单「检查应用更新…」的总入口：先看应用本身，再看能热更新的 pi-web
-/// （F17：菜单文案与弹窗都要讲清楚这一步只处理应用更新）。
+/// 菜单 / 托盘「检查应用更新…」：只检查应用本身（L3 已取消，pi-web 随壳升级）。
 pub fn manual_check_all(app: &tauri::AppHandle) {
     let handle = app.clone();
     std::thread::spawn(move || {
@@ -752,7 +614,6 @@ pub fn manual_check_all(app: &tauri::AppHandle) {
                         .dialog()
                         .message(format!(
                             "应用有新版本 v{}（当前 v{}）。\n\n\
-                             这里只处理应用本身的更新；跳过或已是最新时，会继续检查 pi-web 更新。\n\n\
                              更新会下载整个应用包（含内置 pi-web 与 Node），完成后自动重启。",
                             update.version,
                             env!("CARGO_PKG_VERSION")
@@ -767,21 +628,12 @@ pub fn manual_check_all(app: &tauri::AppHandle) {
                 if accepted {
                     if let Err(error) = install_app_update(&handle, update) {
                         crate::logging::line("update", &format!("应用更新失败：{error}"));
-                        crate::logging::line("update", "继续检查 pi-web 更新");
-                        crate::hotupdate::manual_check(&handle);
                     }
-                    return;
                 }
-                // 用户跳过了应用更新 → 继续查 pi-web（这样 L3 可以单独验证/使用）
-                crate::logging::line("update", "用户跳过应用更新，继续检查 pi-web");
             }
             Ok(None) => crate::logging::line("update", "应用已是最新"),
-            Err(error) => crate::logging::line(
-                "update",
-                &format!("应用更新检查失败（{error}），继续检查 pi-web"),
-            ),
+            Err(error) => crate::logging::line("update", &format!("应用更新检查失败：{error}")),
         }
-        crate::hotupdate::manual_check(&handle);
     });
 }
 
@@ -830,42 +682,5 @@ mod tests {
         assert_eq!(compare_versions("v22.23.4", "22.22.3"), std::cmp::Ordering::Greater);
     }
 
-    #[test]
-    fn detects_upgrade_only_when_strictly_newer() {
-        let bundled = BundledVersions {
-            app: "0.1.0".into(),
-            pi_web: "0.13.0".into(),
-            ..Default::default()
-        };
-        assert!(!upgrade_available(&bundled, "0.13.0"));
-        assert!(upgrade_available(&bundled, "0.13.1"));
-        assert!(!upgrade_available(&bundled, "0.12.9"));
-    }
 
-    #[test]
-    fn message_says_up_to_date_when_equal() {
-        let bundled = BundledVersions {
-            app: "0.1.0".into(),
-            pi_web: "0.13.0".into(),
-            pi_sdk: "1.4.0".into(),
-            node: "22.23.4".into(),
-        };
-        let (message, can_copy) = build_message(&bundled, &Ok("0.13.0".to_string()));
-        assert!(!can_copy);
-        assert!(message.contains("已是最新"));
-        assert!(message.contains("Node 22.23.4"));
-    }
-
-    #[test]
-    fn message_offers_command_when_newer() {
-        let bundled = BundledVersions {
-            app: "0.1.0".into(),
-            pi_web: "0.13.0".into(),
-            pi_sdk: "1.4.0".into(),
-            node: "22.23.4".into(),
-        };
-        let (message, can_copy) = build_message(&bundled, &Ok("0.14.0".to_string()));
-        assert!(can_copy);
-        assert!(message.contains("npm run sidecar"));
-    }
 }

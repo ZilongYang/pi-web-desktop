@@ -19,7 +19,6 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let toggle = MenuItemBuilder::with_id("tray_toggle", "显示 / 隐藏主窗口").build(app)?;
     let open_browser = MenuItemBuilder::with_id("open_browser", "在浏览器中打开").build(app)?;
     let check_update = MenuItemBuilder::with_id("check_update", "检查应用更新…").build(app)?;
-    let update_piweb = MenuItemBuilder::with_id("check_piweb_update", "更新 pi-web…").build(app)?;
     let open_logs = MenuItemBuilder::with_id("open_logs", "打开日志目录").build(app)?;
     let quit = MenuItemBuilder::with_id("tray_quit", "退出 Pi Web Desktop").build(app)?;
 
@@ -30,7 +29,6 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             &PredefinedMenuItem::separator(app)?,
             &open_browser,
             &check_update,
-            &update_piweb,
             &open_logs,
             &PredefinedMenuItem::separator(app)?,
             &quit,

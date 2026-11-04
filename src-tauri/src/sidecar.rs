@@ -250,6 +250,29 @@ fn bundled_node(app: &tauri::AppHandle) -> Option<PathBuf> {
 ///   3. dev 的仓库根 `sidecar/`
 ///
 /// overlay 永远复用包内的 Node —— 这正是 L3"只换 pi-web、不动 Node"的意思。
+/// 取消 L3（2026-11-04）后：把历史上热更新留在
+/// `<app_local_data>/sidecar` 的 overlay 删掉，回到内置固定版本。
+/// 在 resolve 之前调用；删不掉只记日志，不阻塞启动。
+pub fn cleanup_overlay(app: &tauri::AppHandle) {
+    let Ok(local) = app.path().app_local_data_dir() else {
+        return;
+    };
+    let root = local.join("sidecar");
+    if !root.exists() {
+        return;
+    }
+    match std::fs::remove_dir_all(&root) {
+        Ok(()) => crate::logging::line(
+            "sidecar",
+            &format!("已清理历史热更新侧车 {}（L3 已取消，回到内置版本）", root.display()),
+        ),
+        Err(error) => crate::logging::line(
+            "sidecar",
+            &format!("清理历史热更新侧车失败（忽略）：{error}"),
+        ),
+    }
+}
+
 pub fn resolve(app: &tauri::AppHandle) -> Result<Sidecar, String> {
     let mut tried: Vec<String> = Vec::new();
 
@@ -263,39 +286,6 @@ pub fn resolve(app: &tauri::AppHandle) -> Result<Sidecar, String> {
         if let Some(dev_root) = dev_sidecar_root() {
             bundled_version = read_sidecar_version(&dev_root).unwrap_or_default();
         }
-    }
-
-    if let Ok(local) = app.path().app_local_data_dir() {
-        let root = local.join("sidecar");
-        if root.join("app").is_dir() {
-            if let Some(node) = bundled_node(app) {
-                if let Some(sidecar) = from_root(&root, node) {
-                    let is_newer = crate::update::compare_versions_public(
-                        &sidecar.version,
-                        &bundled_version,
-                    ) == std::cmp::Ordering::Greater;
-                    if is_newer {
-                        crate::logging::line(
-                            "sidecar",
-                            &format!(
-                                "使用热更新侧车 {}（pi-web {}）",
-                                root.display(),
-                                sidecar.version
-                            ),
-                        );
-                        return Ok(sidecar);
-                    }
-                    crate::logging::line(
-                        "sidecar",
-                        &format!(
-                            "忽略过期的热更新侧车（{} <= 包内 {}），继续用包内的",
-                            sidecar.version, bundled_version
-                        ),
-                    );
-                }
-            }
-        }
-        tried.push(root.display().to_string());
     }
 
     if let Ok(resource_dir) = app.path().resource_dir() {

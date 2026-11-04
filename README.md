@@ -57,7 +57,7 @@ cargo build                 # 调试构建
 
 | 壳版本 | 内置 pi-web | 内置 Node |
 |---|---|---|
-| 0.3.1 | 0.14.2 | 22.23.4 |
+| 0.3.2-beta.1 | 0.15.0 | 22.23.4 |
 
 发版流程与版本号规则见 [docs/RELEASE-PROCESS.md](docs/RELEASE-PROCESS.md)（默认只递增 patch：`0.3.1-beta.1` → `0.3.1` → `0.3.2-beta.1`）。
 
@@ -117,7 +117,7 @@ cargo build                 # 调试构建
 | 编辑 | 撤销 ⌘Z / 重做 ⇧⌘Z / 剪切 ⌘X / 拷贝 ⌘C / 粘贴 ⌘V / 全选 ⌘A |
 | **视图** | **放大 ⌘= / 缩小 ⌘- / 实际大小 ⌘0 / 进入全屏**；档位 50%–300%，会记住（写进 `config.json` 的 `zoom`） |
 | 窗口 | 最小化 / 缩放窗口 |
-| Pi Web | 重新加载页面 ⌘R / 重启服务 ⇧⌘R / **检查更新…** / **更新 pi-web…** / 在浏览器中打开 / 复制服务地址 / 打开日志目录 / 开发者工具 ⌥⌘I |
+| Pi Web | 重新加载页面 ⌘R / 重启服务 ⇧⌘R / **检查应用更新…** / 更新通道（正式版 / 测试版） / 在浏览器中打开 / 复制服务地址 / 打开日志目录 / 开发者工具 ⌥⌘I |
 | 帮助 | GitHub 仓库 |
 
 页面缩放只影响显示，不影响终端面板里执行的命令。
@@ -130,13 +130,12 @@ cargo build                 # 调试构建
 |---|---|---|---|
 | **L1 检测** | 版本认知 | 每次启动查 npm registry，落后就提示（同一版本只提醒一次） | 静默 |
 | **L2 应用自更新** | 整个 `.app`（含内置 pi-web / pi SDK / Node） | Tauri updater：下载 `.app.tar.gz` → 校验 minisign 签名 → 替换 → 重启 | 报错并保持旧版本 |
-| **L3 pi-web 热更新** | **只换 pi-web**，Node 不动 | 从 GitHub Release 下载侧车包（≈80MB）→ **进度窗** → 校验 SHA256 → 解压 → 原子切换 → 重启侧车 | 自动回滚到上一版本（也有提示） |
+| ~~L3 pi-web 热更新~~ | **已取消**（2026-11-04） | pi-web 版本与 App 一对一固定，随发版升级；见 [PLAN-2026-11-04-drop-l3.md](docs/PLAN-2026-11-04-drop-l3.md) | — |
 
 细节：
 
-- 菜单「检查更新…」先查应用本身（L2），没有应用更新（或你选择跳过）再查 pi-web（L3）；「Pi Web → 更新 pi-web…」可直达 L3。
+- 菜单「检查应用更新…」只检查应用本身；应用启动时查一次、运行期间每 6 小时再查一次。
 - **每次启动都会静默检查**（应用更新 20s 后、pi-web 10s 后）；同一个版本只提醒一次，不会每次开机都弹窗。
-- L3 装到 `~/Library/Application Support/com.zilong.piweb.desktop/sidecar/`，**不改签名过的 `.app`**；包内版本更高时会自动忽略旧的热更新目录（升级 app 后不会"降级运行"）。
 - pi 的扩展/插件/skills 不需要壳参与：pi-web 的插件面板自己就能装/升级。
 - 开发/演练用环境变量：`PIWEB_UPDATE_HEADLESS=1`（不弹窗、自动确认）、`PIWEB_SIDECAR_MANIFEST_URL`（指向本地假 Release）、`PIWEB_UPDATE_CHECK_ON_STARTUP=1`（启动 3s 后自动跑一次检查）。
 
@@ -157,7 +156,7 @@ updater 密钥（minisign）与 Apple 签名无关：
 # 私钥与密码加到 GitHub Secrets：TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 ```
 
-发布：改 `src-tauri/tauri.conf.json` 与 `package.json`/`Cargo.toml` 的版本 → 提交 → `git tag v<ver> && git push origin v<ver>`，CI（`.github/workflows/release.yml`）会构建并发布 Release（dmg / zip / updater 包 + `latest.json` / L3 侧车包 + `piweb-sidecar.json` / SHA256SUMS）。
+发布：改 `src-tauri/tauri.conf.json` 与 `package.json`/`Cargo.toml` 的版本 → 提交 → `git tag v<ver> && git push origin v<ver>`，CI（`.github/workflows/release.yml`）会构建并发布 Release（dmg / zip / updater 包 + `latest.json` / SHA256SUMS）。
 
 本地想先验证打包：`npm run dist`（在普通终端里跑，`diskutil` 需要挂载卷）。
 

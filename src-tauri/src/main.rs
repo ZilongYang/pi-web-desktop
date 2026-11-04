@@ -9,7 +9,6 @@
 //! 原生窗口/菜单/生命周期，不需要网页与 Rust 通信。
 
 mod discovery;
-mod hotupdate;
 mod logging;
 mod menu;
 mod probe;
@@ -240,13 +239,8 @@ fn run_launch(app: tauri::AppHandle) {
     };
     let config = sidecar::Config::load(&app);
 
-    let skip_attach = SKIP_ATTACH_NEXT_LAUNCH.swap(false, Ordering::SeqCst);
-    if skip_attach {
-        logging::line("app", "本次启动强制自己起侧车（热更新验证），跳过附着");
-    }
-
     // 1) 附着同版本实例：避免两份服务同时写同一份会话文件
-    if !skip_attach && config.attach_policy != "never" {
+    if config.attach_policy != "never" {
         if let Some(existing) = discovery::find_matching(&sidecar.version) {
             status(&app, "attached", format!("已连接本机运行的 pi-web v{}（{}）", existing.version, existing.url));
             if let Ok(mut port) = state.allowed_port.lock() {
@@ -355,7 +349,6 @@ static HEALTH_MONITOR_STARTED: AtomicBool = AtomicBool::new(false);
 
 /// 下一次启动强制自己起侧车（热更新验证用）：不要附着到外部实例，
 /// 否则"探活成功"可能只是外部那个实例在应答，误判成新版本可用。
-static SKIP_ATTACH_NEXT_LAUNCH: AtomicBool = AtomicBool::new(false);
 
 /// 运行期健康监控，全局只有一个。
 ///
@@ -493,16 +486,6 @@ pub fn restart_sidecar_now(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 热更新验证用：强制下一次启动自己起侧车（不附着）。
-pub(crate) fn restart_sidecar_spawn_only(app: &tauri::AppHandle) -> Result<(), String> {
-    SKIP_ATTACH_NEXT_LAUNCH.store(true, Ordering::SeqCst);
-    restart_sidecar_now(app)
-}
-
-/// 侧车是不是已经明确失败（用于热更新快速判定，不用等满 60s）。
-pub(crate) fn sidecar_failed(app: &tauri::AppHandle) -> bool {
-    matches!(*app.state::<AppState>().mode.lock().unwrap(), Mode::Failed)
-}
 
 /// 当前是否由本应用自己托管着侧车（热更新验证"真的起来了"）。
 pub(crate) fn owns_running_sidecar(app: &tauri::AppHandle) -> bool {
@@ -688,6 +671,9 @@ fn main() {
                 Err(error) => logging::line("app", &format!("构建菜单失败：{error}")),
             }
 
+            // 取消 L3 后：把历史上热更新留下的 overlay 清掉，回到内置固定版本
+            sidecar::cleanup_overlay(&handle);
+
             // 菜单栏托盘（F16）
             match tray::create(&handle) {
                 Ok(()) => {}
@@ -766,11 +752,9 @@ fn main() {
             // 恢复上次的页面缩放（菜单「视图 → 放大/缩小/实际大小」改的那个）
             zoom::restore(&handle);
             start_health_monitor(handle.clone());
-            // 上次热更新如果崩在半路，先把 overlay 恢复好再启动
-            hotupdate::recover_on_startup(&handle);
-            // 更新检测：pi-web（L1）与应用自身（L2），内部各自起线程
-            update::silent_check(&handle);
+            // 更新检测：只检查应用本身（L3 已取消）；启动查一次 + 运行期定期查
             update::silent_app_check(&handle);
+            update::start_periodic_check(&handle);
             // 演练钩子：启动 3 秒后自动跑一次「检查更新」，用于端到端验证 L2/L3
             if std::env::var("PIWEB_UPDATE_CHECK_ON_STARTUP").ok().as_deref() == Some("1") {
                 let handle = app.handle().clone();

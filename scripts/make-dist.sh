@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 打发布包到 dist/：ad-hoc 签名的 .app、dmg、zip、SHA256SUMS，以及 L3 用的「只含 pi-web」
+# 打发布包到 dist/：ad-hoc 签名的 .app、dmg、zip、SHA256SUMS。
 # 侧车包。移植自 zWGestures 的 scripts/make-dist.sh（同一套取舍），针对 Tauri 产物改写。
 #
 # 为什么发布用 ad-hoc 而不是本机自签名证书
@@ -22,8 +22,6 @@
 #   Pi-Web-Desktop-<ver>-<arch>.dmg / .zip          版本化
 #   Pi-Web-Desktop-<arch>.dmg / .zip                固定名（下载按钮）
 #   Pi-Web-Desktop-<ver>-<arch>.app.tar.gz(+.sig)   Tauri updater 包（有签名密钥时）
-#   piweb-app-<piWebVer>-<target>.tar.gz            L3：只含 pi-web 的侧车包
-#   piweb-sidecar.json                              L3 清单（版本 + url + sha256）
 #   SHA256SUMS
 #
 # 用法：scripts/make-dist.sh
@@ -137,29 +135,8 @@ cp "$ZIP" "$DIST/Pi-Web-Desktop-$AARCH.zip"
 cp "$DMG" "$DIST/Pi-Web-Desktop-$AARCH.dmg"
 ok "固定文件名别名（下载按钮指向 releases/latest/download/）"
 
-note "打 L3 侧车包（只含 pi-web，不含 node）"
-SIDECAR_APP="$REPO_ROOT/sidecar/app"
-[ -d "$SIDECAR_APP" ] || fail "没有 sidecar/app，先跑 npm run sidecar"
-L3_TAR="$DIST/piweb-app-$PIWEB_VERSION-$TARGET.tar.gz"
-( cd "$REPO_ROOT/sidecar" && tar -czf "$L3_TAR" app manifest.json )
-ok "侧车包 $(basename "$L3_TAR")  $(du -h "$L3_TAR" | cut -f1)"
-
-L3_SHA=$(shasum -a 256 "$L3_TAR" | cut -d' ' -f1)
-L3_BYTES=$(stat -f%z "$L3_TAR")
-cat > "$DIST/piweb-sidecar.json" <<JSON
-{
-  "piWebVersion": "$PIWEB_VERSION",
-  "nodeVersion": "$NODE_VERSION",
-  "assets": {
-    "$TARGET": {
-      "url": "https://github.com/ZilongYang/pi-web-desktop/releases/download/piweb-sidecar/$(basename "$L3_TAR")",
-      "sha256": "$L3_SHA",
-      "bytes": $L3_BYTES
-    }
-  }
-}
-JSON
-ok "清单 piweb-sidecar.json"
+# L3（只换 pi-web 的热更新）已于 2026-11-04 取消，不再产出侧车包与清单。
+# 见 docs/PLAN-2026-11-04-drop-l3.md
 
 if [ -f "$BUNDLE_DIR/macos/Pi Web Desktop.app.tar.gz" ]; then
   cp "$BUNDLE_DIR/macos/Pi Web Desktop.app.tar.gz" "$DIST/Pi-Web-Desktop-$VERSION-$AARCH.app.tar.gz"

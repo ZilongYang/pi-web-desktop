@@ -186,6 +186,17 @@
 - [x] 发布 v0.3.1：ci + release 双绿；Release = **Latest**；`latest.json` → 0.3.1；`channel-beta` 仍 0.3.1-beta.2
 - [x] 发布后核验：线上 `releases/latest/download/latest.json` = 0.3.1
 
+## 0.3.2-beta.1（取消 L3 + pi-web 0.15.0 + 定期检查）
+
+- [x] 方案存档：`docs/PLAN-2026-11-04-drop-l3.md`（决策：pi-web 随壳固定，取消 L3）
+- [x] 删除 `hotupdate.rs`；`sidecar::resolve` 去掉 overlay；启动时清理历史 overlay（`sidecar::cleanup_overlay`）
+- [x] 删除 L1 npm 上游检查、菜单/托盘「更新 pi-web…」、CI 侧车清单发布步骤、make-dist 侧车包产物
+- [x] pi-web 升到 **0.15.0**（SDK 仍 1.5.0 / Node 22.23.4）：折叠补丁已应用；**导出补丁判定"上游已不再使用字符串补丁"，自动跳过**（等于上游修好了 B2）
+- [x] `npm run smoke` 通过（导出 HTML 278.9 KB）
+- [x] 新增运行期定期检查：启动查一次 + 每 6 小时查（`PIWEB_PERIODIC_CHECK_SECS` 可覆盖）
+- [ ] `cargo test` / `npm run smoke:app`；本机安装验证（导出、折叠、托盘、退出确认、定期检查日志）
+- [ ] 发布 v0.3.2-beta.1 → 验收后转正 0.3.2
+
 ## 每次发版的固定动作
 
 ```bash

@@ -11,7 +11,7 @@
 
 - 仓库：<https://github.com/ZilongYang/pi-web-desktop>（MIT）
 - 最新正式版：**v0.3.2**（内置 pi-web **0.15.0** / pi SDK 1.5.0 / Node 22.23.4）
-- 测试通道最新：**v0.3.2-beta.1**（Pre-release，`channel-beta` 清单）
+- 测试通道最新：**v0.3.3-beta.1**（Pre-release，`channel-beta` 清单）
 - 平台：macOS 14+ arm64（Windows 代码路径已写、未验证；Linux 未做）
 
 ### 两条硬规则
@@ -86,6 +86,7 @@
 
 | 版本 | 内容 |
 |---|---|
+| 0.3.3-beta.1 | 测试版：B4 PATH 缓存自愈（缓存+兜底并集、陈旧自动重探测、菜单「重新载入登录环境」） |
 | 0.3.2 | 取消 L3（pi-web 随壳固定）+ pi-web 0.15.0 + 运行期每 6 小时检查更新 |
 | 0.3.1 | 托盘 + 关窗隐藏、L3 清单独立、退出确认 |
 | 0.3.0 | 更新通道转正（正式版 / 测试版） |

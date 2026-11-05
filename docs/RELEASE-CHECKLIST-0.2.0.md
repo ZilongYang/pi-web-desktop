@@ -213,10 +213,10 @@
 - [x] `npm run smoke:app`：**首轮构建通过**（启动行 / 窗口几何 / 侧车端口可连 / 恢复几何）；**最终构建未重跑**——脚本检测到端口 30241 已有用户正在用的实例在跑会直接拒绝执行（不关用户 App 就跑不了），启动路径未变、隔离实例启动/侧车验证已覆盖
 - [x] 构建 0.3.3-beta.1：`src-tauri/target/release/bundle/macos/Pi Web Desktop.app`，ad-hoc 签名，`codesign --verify --deep --strict` 通过
 - [x] 隔离实例真机验收：`~/Applications/PiWebPathTest.app`（配置/日志/agent 隔离）；陈旧缓存首启即并集 + 后台重探测，二次启动不再跑 zsh（证据见 QA 2026-11-05）
-- [ ] 安装到本机（等用户 App 空闲；用户要求不要动正在用的 App）
-- [ ] 子龙本机验收（真实 App：菜单「Pi Web → 重新载入登录环境」手点一次、终端面板 `which node pnpm mmx defuddle mnemon`、会话里 mnemon 状态行带计数）
-- [ ] git tag `v0.3.3-beta.1`
-- [ ] 发布后核对（`channel-beta` 清单指向 beta.1、正式版通道不受影响）
+- [x] 安装到本机：14:37 用户退出 App 后替换 `/Applications`（0.3.3-beta.1 / adhoc 签名校验通过 / 启动 1.69s 就绪）；真实缓存首次自愈 43→37 条、失效清零
+- [x] 子龙本机验收：**通过**。菜单「Pi Web → 重新载入登录环境」手点成功（探测 432ms → 清洗 → 重启侧车 Ready 130ms）；14:45 重启后缓存不再重探测；临时 shim 已删除
+- [x] git tag `v0.3.3-beta.1`（commit `77d26ef`）
+- [x] 发布后核对：ci `41983433996` + release `41983433908` 双绿；Release = Pre-release（8 资产）；`channel-beta` latest.json → 0.3.3-beta.1；稳定通道 Latest 仍 v0.3.2
 
 ## 每次发版的固定动作
 

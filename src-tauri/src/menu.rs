@@ -130,6 +130,9 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let restart = MenuItemBuilder::with_id("restart", "重启服务")
         .accelerator("CmdOrCtrl+Shift+R")
         .build(app)?;
+    // 排障入口：清掉 login-path.txt 缓存 → 重跑登录 shell 探测 → 重启侧车（BUG-2026-11-05）
+    let reload_login_env =
+        MenuItemBuilder::with_id("reload_login_env", "重新载入登录环境").build(app)?;
     let check_update = MenuItemBuilder::with_id("check_update", "检查应用更新…").build(app)?;
     let open_browser = MenuItemBuilder::with_id("open_browser", "在浏览器中打开").build(app)?;
     let copy_url = MenuItemBuilder::with_id("copy_url", "复制服务地址").build(app)?;
@@ -161,6 +164,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         &[
             &reload,
             &restart,
+            &reload_login_env,
             &check_update,
             &channel_menu,
             &PredefinedMenuItem::separator(app)?,
@@ -231,6 +235,7 @@ pub fn on_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
                 crate::logging::line("menu", &format!("重启失败：{error}"));
             }
         }
+        "reload_login_env" => crate::sidecar::reload_login_environment(app),
         "quit_app" => {
             // 走 app.exit() -> RunEvent::ExitRequested -> quit_guard 弹确认框
             crate::logging::line("quit", "收到退出请求（菜单 / ⌘Q）");

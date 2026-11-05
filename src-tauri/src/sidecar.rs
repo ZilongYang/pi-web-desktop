@@ -351,7 +351,23 @@ pub struct Running {
     pub launcher_pid: u32,
 }
 
-/// 跑一次登录 shell，把交互式 rc 写进 PATH 的结果取回来。
+fn login_path_cache_file() -> Option<PathBuf> {
+    app_dirs::config_dir().map(|d| d.join("login-path.txt"))
+}
+
+/// 登录 shell PATH 缓存的有效期：超过就重新探测（探不到也继续用「缓存 + 兜底」并集）。
+const LOGIN_PATH_CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 3600);
+/// 缓存「够旧」就顺手后台刷新一次：不必等 7 天过期，换了 node 版本/装了新工具后最多一天自愈。
+const LOGIN_PATH_CACHE_REFRESH_AFTER: Duration = Duration::from_secs(24 * 3600);
+/// 登录 shell 探测的等待上限。探测永远在后台线程里跑，不占启动路径，所以给足时间
+/// （旧版 1.2s 在构建/高负载时会被误判超时，而缓存一旦写不进去，下次启动还是老路径）。
+const LOGIN_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+/// 同一个后台探测线程里最多试几次：一次失败不再等于「本进程终身放弃」。
+const LOGIN_PROBE_ATTEMPTS: usize = 2;
+/// 菜单「重新载入登录环境」用的宽松超时：用户主动触发，多等几秒没关系。
+const LOGIN_PROBE_MANUAL_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// 从 `zsh -lic` 拿登录 shell 的 PATH；失败/超时返回 None。
 ///
 /// 为什么必须这么干：从 Finder/Dock 启动的 GUI 进程只继承
 /// `/usr/bin:/bin:/usr/sbin:/sbin`，而 nvm / pnpm / asdf / volta / deno 这些
@@ -360,16 +376,11 @@ pub struct Running {
 ///
 /// 用 `-l`（读 .zprofile）+ `-i`（读 .zshrc）+ `-c`；stderr 丢掉（starship 之类
 /// 会往 stderr 打 TERM=dumb 的抱怨），只认 stdout 里最后一行像 PATH 的内容。
-/// 2s 超时，失败就当作没有，退回内置列表，绝不让壳启动被 rc 拖死。
-fn login_path_cache_file() -> Option<PathBuf> {
-    app_dirs::config_dir().map(|d| d.join("login-path.txt"))
+fn probe_login_shell_path() -> Option<String> {
+    probe_login_shell_path_with_timeout(LOGIN_PROBE_TIMEOUT)
 }
 
-/// 从 `zsh -lic` 拿登录 shell 的 PATH；失败/超时返回 None。
-///
-/// 实测：从 Finder 启动的 .app 里这一条会**卡住**（同一条命令在终端里 0.3–1.2s 就回），
-/// 所以这里只等 1.2s；拿到就缓存到 app config 目录，下次启动直接用缓存，不再付这个时间。
-fn probe_login_shell_path() -> Option<String> {
+fn probe_login_shell_path_with_timeout(timeout: Duration) -> Option<String> {
     if !cfg!(unix) {
         return None;
     }
@@ -390,7 +401,47 @@ fn probe_login_shell_path() -> Option<String> {
         }
     };
 
-    let deadline = Instant::now() + Duration::from_millis(1200);
+    // stdout 必须「边跑边读」：rc 往 stdout 打横幅时，管道写满（macOS 64 KB）会让
+    // 子 shell 卡在 write 上永不退出 → try_wait 等不到 → 被误判成「超时」。
+    //
+    // 读到的东西先攒进共享 buffer，而不是等 read_to_string 读到 EOF 才交卷：rc 里起的
+    // 后台进程如果继承了 stdout（nvm 懒加载 / antigen / conda hook 都常见），子 shell
+    // 早已退出、PATH 也已经打印，但管道永远等不到 EOF —— 旧实现会把这份可用结果丢掉。
+    // 这里 EOF 最多等 1s，等不到就用已经读到的内容。
+    //
+    // 按字节攒、最后一次性 lossy 解码：分块解码会在 4 KiB 边界切断多字节字符。
+    let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+    let (sender, receiver) = std::sync::mpsc::channel::<bool>();
+    match child.stdout.take() {
+        Some(mut stdout) => {
+            let output = output.clone();
+            std::thread::spawn(move || {
+                use std::io::Read;
+                let mut chunk = [0u8; 4096];
+                let mut read_ok = true;
+                loop {
+                    match stdout.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(read) => {
+                            if let Ok(mut buffer) = output.lock() {
+                                buffer.extend_from_slice(&chunk[..read]);
+                            }
+                        }
+                        Err(_) => {
+                            read_ok = false;
+                            break;
+                        }
+                    }
+                }
+                let _ = sender.send(read_ok);
+            });
+        }
+        None => {
+            let _ = sender.send(false);
+        }
+    }
+
+    let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
@@ -401,7 +452,8 @@ fn probe_login_shell_path() -> Option<String> {
                 crate::logging::line(
                     "path",
                     &format!(
-                        "登录 shell 取 PATH 超过 1.2s（已等 {}ms），放弃；改用缓存/常见目录兜底",
+                        "登录 shell 取 PATH 超过 {}s（已等 {}ms），放弃；继续用缓存/兜底目录",
+                        timeout.as_secs(),
                         started.elapsed().as_millis()
                     ),
                 );
@@ -410,16 +462,38 @@ fn probe_login_shell_path() -> Option<String> {
         }
     }
 
-    let mut out = String::new();
-    use std::io::Read;
-    child.stdout.take()?.read_to_string(&mut out).ok()?;
-    let candidate = out
+    let eof = receiver
+        .recv_timeout(Duration::from_millis(1000))
+        .unwrap_or(false);
+    let bytes = output.lock().map(|buffer| buffer.clone()).unwrap_or_default();
+    let out = String::from_utf8_lossy(&bytes).to_string();
+    if !eof {
+        crate::logging::line(
+            "path",
+            &format!(
+                "登录 shell 已退出，但 stdout 1s 内没等到 EOF（可能有后台进程占着管道）；用已读到的 {} 字节继续",
+                bytes.len()
+            ),
+        );
+    } else if bytes.is_empty() {
+        crate::logging::line("path", "登录 shell 已退出，stdout 为空");
+    }
+    let candidate = match out
         .lines()
         .rev()
-        .find(|line| line.contains('/') && line.contains(':'))?
-        .trim()
-        .to_string();
+        .find(|line| line.contains('/') && line.contains(':'))
+    {
+        Some(line) => line.trim().to_string(),
+        None => {
+            crate::logging::line(
+                "path",
+                &format!("登录 shell 输出里没有 PATH（共 {} 字节），放弃", out.len()),
+            );
+            return None;
+        }
+    };
     if candidate.matches('/').count() < 2 {
+        crate::logging::line("path", "登录 shell 输出的 PATH 太短，放弃");
         return None;
     }
     crate::logging::line(
@@ -433,58 +507,335 @@ fn probe_login_shell_path() -> Option<String> {
     Some(candidate)
 }
 
-static LOGIN_PATH_PROBE_STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+/// 上次发起探测的时间（UNIX ms）。0 = 还没探测过。
+/// 用「最小间隔」而不是 `OnceLock`：长跑进程里侧车重启（菜单「重启服务」）也应该能重新
+/// 探测一次，否则 24h 自愈在同一个 App 进程内只生效一次。
+static LOGIN_PATH_PROBE_LAST_MS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+/// 两次后台探测的最小间隔：防止同一次启动里重复拉起 zsh。
+const LOGIN_PROBE_MIN_INTERVAL: Duration = Duration::from_secs(600);
 
-/// 后台跑一次登录 shell 探测，成功后写缓存给下次启动用。
-/// 不在启动路径上等它：GUI 启动时这条命令实测会卡住（同一命令在终端里 0.3–1.2s 就回）。
+fn probe_allowed(last_probe_ms: u64, now_ms: u64) -> bool {
+    last_probe_ms == 0
+        || now_ms.saturating_sub(last_probe_ms) >= LOGIN_PROBE_MIN_INTERVAL.as_millis() as u64
+}
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// 后台跑登录 shell 探测并刷新缓存。
+///
+/// 每 10 分钟最多拉起一个后台线程，但**线程内部最多试两次**：
+/// 旧实现一次失败就终身放弃，而缓存又要等 7 天 TTL 才重新探测，等于永不自愈。
 fn trigger_login_path_probe() {
-    if LOGIN_PATH_PROBE_STARTED.set(()).is_err() {
+    use std::sync::atomic::Ordering;
+    let now = now_millis();
+    let last = LOGIN_PATH_PROBE_LAST_MS.load(Ordering::SeqCst);
+    if !probe_allowed(last, now) {
+        crate::logging::line("path", "10 分钟内已探测过登录 shell PATH，本次跳过");
+        return;
+    }
+    if LOGIN_PATH_PROBE_LAST_MS
+        .compare_exchange(last, now, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
         return;
     }
     std::thread::spawn(|| {
-        if let Some(path) = probe_login_shell_path() {
-            write_login_path_cache(&path);
-            crate::logging::line("path", "登录 shell PATH 已缓存，下次启动生效");
+        for attempt in 1..=LOGIN_PROBE_ATTEMPTS {
+            if let Some(path) = probe_login_shell_path() {
+                write_login_path_cache(&path);
+                return;
+            }
+            if attempt < LOGIN_PROBE_ATTEMPTS {
+                crate::logging::line(
+                    "path",
+                    &format!("探测失败（第 {attempt} 次），500ms 后重试"),
+                );
+                std::thread::sleep(Duration::from_millis(500));
+            }
         }
+        crate::logging::line(
+            "path",
+            "后台探测重试后仍未取到登录 shell PATH；继续用「缓存 + 兜底目录」并集（下次启动再试）",
+        );
     });
 }
 
-fn read_login_path_cache() -> Option<String> {
-    let path = login_path_cache_file()?;
-    let text = std::fs::read_to_string(&path).ok()?;
+struct LoginPathCache {
+    value: String,
+    age: Duration,
+    /// 缓存里已经不存在的目录 —— nvm 换版本后就是这些，命中即视为「缓存陈旧」。
+    missing_dirs: Vec<PathBuf>,
+}
+
+impl LoginPathCache {
+    /// 是否需要后台重探测：有失效目录（换版本/删目录）或缓存超过一天。
+    fn needs_refresh(&self) -> bool {
+        !self.missing_dirs.is_empty() || self.age > LOGIN_PATH_CACHE_REFRESH_AFTER
+    }
+
+    fn describe(&self) -> String {
+        let age = if self.age.as_secs() < 3600 {
+            format!("{} 分钟前", self.age.as_secs() / 60)
+        } else {
+            format!("{:.1} 天前", self.age.as_secs_f64() / 86400.0)
+        };
+        if self.missing_dirs.is_empty() {
+            format!("缓存 {age}")
+        } else {
+            format!("缓存 {age}，{} 条路径已失效", self.missing_dirs.len())
+        }
+    }
+}
+
+fn cache_is_fresh(age: Duration) -> bool {
+    age <= LOGIN_PATH_CACHE_TTL
+}
+
+fn read_login_path_cache() -> Option<LoginPathCache> {
+    read_login_path_cache_from(&login_path_cache_file()?)
+}
+
+/// 从指定路径读缓存（抽出来便于用临时文件做单测；文件读写逻辑这里才是 BUG 现场）。
+fn read_login_path_cache_from(path: &Path) -> Option<LoginPathCache> {
+    let text = std::fs::read_to_string(path).ok()?;
     let text = text.trim().to_string();
     if text.matches('/').count() < 2 {
         return None;
     }
-    let age = std::fs::metadata(&path)
+    let age = std::fs::metadata(path)
         .and_then(|m| m.modified())
         .ok()
         .and_then(|t| t.elapsed().ok())?;
-    if age > Duration::from_secs(7 * 24 * 3600) {
+    if !cache_is_fresh(age) {
         return None;
     }
-    Some(text)
+    Some(LoginPathCache {
+        missing_dirs: cached_missing_dirs(&text),
+        value: text,
+        age,
+    })
+}
+
+/// 目录状态：区分「真的不存在」与「stat 失败」（权限 / TCC / 未挂载卷 / IO 错误）。
+/// 后者不能当成「过期」或「垃圾条目」处理，否则会把实际存在的目录从缓存里误删。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CachedDirState {
+    Present,
+    Missing,
+    Unknown,
+}
+
+fn cached_dir_state(path: &Path) -> CachedDirState {
+    match std::fs::metadata(path) {
+        Ok(_) => CachedDirState::Present,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => CachedDirState::Missing,
+        Err(_) => CachedDirState::Unknown,
+    }
+}
+
+/// 缓存里已经不存在的目录（纯判断，便于单测）。
+///
+/// 只对**绝对路径**判失效：登录 shell 的 PATH 里可能有字面 `~/.dotnet/tools` 这种
+/// 未展开条目（本机 .zshrc 就这么写过一条）。它不是「缓存过期」的证据 —— 否则探测
+/// 成功写回缓存后，每次启动都会判「1 条失效」→ 反复探测，24h/7 天阈值都形同虚设。
+/// stat 失败（权限/未挂载）也不算失效，见 `CachedDirState`。
+fn cached_missing_dirs(cached: &str) -> Vec<PathBuf> {
+    std::env::split_paths(cached)
+        .filter(|dir| {
+            let path = Path::new(dir.as_os_str());
+            path.is_absolute() && cached_dir_state(path) == CachedDirState::Missing
+        })
+        .collect()
+}
+
+/// 缓存写入前的清洗：丢掉不存在/空/重复条目，只留捕获时真实存在的目录。
+///
+/// 为什么必须清洗：登录 shell 的 PATH 里本来就有 `~/.dotnet/tools`（字面波浪号）、
+/// cryptexd 的 `/var/run/...` 伪目录、`/pkg/env/global/bin` 这类**永远不存在**的条目。
+/// 原样写进缓存后，每次启动都会把「2 条路径已失效」判成缓存陈旧 → 反复拉起 zsh 探测，
+/// 24h/7 天阈值全部失效。清洗后「失效」只会来自捕获时存在、之后消失的目录（正是
+/// nvm 换版本的场景），自愈判断才准。不存在的 PATH 条目对命令查找本来就无用。
+///
+/// 返回 `None` 表示「清洗后一条不剩」（多半捕获到的不是 PATH 而是横幅），调用方应保留旧缓存。
+fn normalize_login_path(value: &str) -> Option<String> {
+    let mut dropped = 0usize;
+    let mut kept_dirs = 0usize;
+    let mut seen = std::collections::HashSet::new();
+    let kept: Vec<PathBuf> = std::env::split_paths(value)
+        .filter(|dir| {
+            // stat 失败的条目保留（可能只是权限/挂载问题，不代表它消失了）
+            let present = cached_dir_state(Path::new(dir.as_os_str())) != CachedDirState::Missing;
+            let keep = !dir.as_os_str().is_empty() && present && seen.insert(dir.clone());
+            if keep {
+                kept_dirs += 1;
+            } else {
+                dropped += 1;
+            }
+            keep
+        })
+        .collect();
+    if dropped > 0 {
+        crate::logging::line(
+            "path",
+            &format!("缓存清洗：丢弃 {dropped} 条不存在/重复条目（保留 {kept_dirs} 条）"),
+        );
+    }
+    if kept.is_empty() {
+        crate::logging::line("path", "缓存清洗后为空（捕获内容不像 PATH），保留原缓存不覆盖");
+        return None;
+    }
+    match std::env::join_paths(&kept) {
+        Ok(joined) => Some(joined.to_string_lossy().to_string()),
+        // 极端情况（条目里带 ':'、含非 UTF-8）：保留原值，别把整份缓存写坏
+        Err(error) => {
+            crate::logging::line(
+                "path",
+                &format!("缓存清洗后无法重新拼接 PATH（{error}），原样写入"),
+            );
+            Some(value.to_string())
+        }
+    }
 }
 
 fn write_login_path_cache(value: &str) {
-    let Some(path) = login_path_cache_file() else { return };
+    let Some(cleaned) = normalize_login_path(value) else {
+        return;
+    };
+    let value = cleaned.as_str();
+    let Some(path) = login_path_cache_file() else {
+        crate::logging::line("path", "缓存写入失败：拿不到配置目录");
+        return;
+    };
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            crate::logging::line(
+                "path",
+                &format!("缓存写入失败：建目录 {}：{error}", parent.display()),
+            );
+            return;
+        }
     }
-    let _ = std::fs::write(path, value);
+    let entries = std::env::split_paths(value)
+        .filter(|entry| !entry.as_os_str().is_empty())
+        .count();
+    match std::fs::write(&path, value) {
+        Ok(()) => {
+            // 写后回读：把「写成功」和「真落地」分开，免得再出现「日志说已缓存、文件没变」的误判
+            let readback = std::fs::read_to_string(&path).ok();
+            if readback.as_deref() != Some(value) {
+                crate::logging::line(
+                    "path",
+                    &format!(
+                        "缓存写入后回读不一致：{}（{entries} 条 / {} 字节）",
+                        path.display(),
+                        value.len()
+                    ),
+                );
+            } else {
+                crate::logging::line(
+                    "path",
+                    &format!(
+                        "登录 shell PATH 已缓存：{}（{entries} 条 / {} 字节），下次启动生效",
+                        path.display(),
+                        value.len()
+                    ),
+                );
+            }
+        }
+        Err(error) => crate::logging::line(
+            "path",
+            &format!("缓存写入失败：{}：{error}", path.display()),
+        ),
+    }
+}
+
+/// 菜单「重新载入登录环境」正在进行的标记：连点两下不叠加探测/重启。
+static LOGIN_PATH_RELOAD_IN_FLIGHT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// 菜单「重新载入登录环境」：重新探测 → 成功才覆盖缓存 → 重启侧车。
+/// 全程在后台线程，不阻塞 UI；失败保留原缓存并弹窗提示（headless 不弹）。
+pub fn reload_login_environment(app: &tauri::AppHandle) {
+    use std::sync::atomic::Ordering;
+    if LOGIN_PATH_RELOAD_IN_FLIGHT.swap(true, Ordering::SeqCst) {
+        crate::logging::line("path", "「重新载入登录环境」已在执行，忽略重复触发");
+        return;
+    }
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        // panic 也要复位「进行中」标志，否则菜单会永久失效
+        let _reset = ReloadInFlightGuard;
+        crate::logging::line(
+            "path",
+            "「重新载入登录环境」：重新探测登录 shell（成功才覆盖缓存）",
+        );
+        match probe_login_shell_path_with_timeout(LOGIN_PROBE_MANUAL_TIMEOUT) {
+            Some(path) => {
+                write_login_path_cache(&path);
+                if let Err(error) = crate::restart_sidecar_now(&handle) {
+                    crate::logging::line("path", &format!("重新载入后重启侧车失败：{error}"));
+                }
+            }
+            None => {
+                crate::logging::line(
+                    "path",
+                    "「重新载入登录环境」失败：登录 shell 没有返回 PATH；保留原缓存",
+                );
+                notify_reload_failed(&handle);
+            }
+        }
+    });
+}
+
+/// 用 Drop 保证「重新载入」的进行中标志一定会复位（线程 panic 也不会把菜单卡死）。
+struct ReloadInFlightGuard;
+
+impl Drop for ReloadInFlightGuard {
+    fn drop(&mut self) {
+        LOGIN_PATH_RELOAD_IN_FLIGHT.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+fn notify_reload_failed(app: &tauri::AppHandle) {
+    if crate::update::headless() {
+        return;
+    }
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+    let _ = app
+        .dialog()
+        .message(
+            "没能从登录 shell 取回 PATH（超时或输出异常）。\n\n\
+             侧车会继续使用「缓存 + 兜底目录」拼出的 PATH，不会因此启动失败；\
+             具体原因见日志（菜单「打开日志目录」→ sidecar.log 里的 [path] 行）。",
+        )
+        .title("Pi Web Desktop · 重新载入登录环境失败")
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "知道了".to_string(),
+            "关闭".to_string(),
+        ))
+        .blocking_show();
 }
 
 /// 读不到登录 shell 时的兜底：把常见的版本管理器/用户级 bin 目录按优先级列出来。
-/// 这一步是纯 readdir，零开销，保证即使 `zsh -lic` 卡住，nvm（mnemon/pnpm）、
-/// homebrew、deno、go 这些也照样在 PATH 里。
+/// 这一步是纯 readdir，零开销。现在它不只是「兜底」——`path_with_runtime()` 永远把这份
+/// 列表**并进** PATH（缓存永不自证完整），保证 nvm（mnemon/pnpm）、homebrew、deno、go
+/// 这些即使缓存陈旧也照样可见。
 fn fallback_user_bin_dirs() -> Vec<PathBuf> {
-    let Some(home) = crate::discovery::home_dir() else {
-        return Vec::new();
-    };
+    crate::discovery::home_dir()
+        .map(|home| fallback_user_bin_dirs_in(&home))
+        .unwrap_or_default()
+}
+
+fn fallback_user_bin_dirs_in(home: &Path) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
 
-    // 1) 用户级 bin 排在最前，顺序对齐常见的登录 shell PATH：
-    //    终端里 `node` 命中的是 ~/.local/bin/node（不是 nvm 那个），这里保持一致。
+    // 1) 用户级 bin 排在最前，顺序对齐常见的登录 shell PATH（~/.local/bin 通常最靠前）
     for relative in [
         ".local/bin",
         ".mimocode/bin",
@@ -515,7 +866,7 @@ fn fallback_user_bin_dirs() -> Vec<PathBuf> {
         dirs.push(home.join(relative));
     }
 
-    // 2) nvm：优先 alias/default 指向的那个"当前版本"，其余按版本号从新到旧。
+    // 2) nvm：优先 alias/default 指向的那个「当前版本」，其余按版本号从新到旧。
     let active = std::fs::read_to_string(home.join(".nvm/alias/default"))
         .ok()
         .map(|text| text.trim().to_string())
@@ -560,64 +911,190 @@ fn fallback_user_bin_dirs() -> Vec<PathBuf> {
     ] {
         dirs.push(PathBuf::from(absolute));
     }
-    // 最后的兜底：本机 node 二进制所在（~/.local/bin/node 是它的软链）
-    dirs.push(home.join(".hermes/node/bin"));
     dirs
 }
 
-/// 最终给侧车的 PATH：登录 shell（或缓存）→ 常见用户目录兜底 → 继承值 → 包内 runtime（最后）。
-///
-/// 包内 runtime 放最后是刻意的：侧车自己用 `runtime/node` 的绝对路径启动，不依赖 PATH；
-/// 而会话里执行的命令应该和终端一致（你终端里 `node` 是 ~/.local/bin 那个 v22，
-/// `pnpm`/`mnemon` 是 nvm 里的），包内 Node 只做"用户完全没有 node"时的兜底。
-fn path_with_runtime(sidecar: &Sidecar, config: &Config) -> String {
+/// 拼 PATH 条目的纯逻辑：缓存（可为空）→ 兜底目录 → 继承的 PATH → 包内 runtime；
+/// 去空串、去重保序。抽成纯函数是为了能不改进程环境变量做单测。
+fn compose_path_parts(
+    cached: Option<&str>,
+    fallback: &[PathBuf],
+    inherited: Option<&std::ffi::OsStr>,
+    runtime_dir: Option<&Path>,
+) -> Vec<PathBuf> {
     let mut parts: Vec<PathBuf> = Vec::new();
-    let mut source = "内置目录";
-
-    if config.inherit_login_shell_path {
-        if let Some(cached) = read_login_path_cache() {
-            part_extend(&mut parts, &cached);
-            source = "登录 shell 缓存";
-        } else {
-            // 首次启动（或缓存过期）：不等登录 shell，直接用常见目录 + 后台探测
-            for dir in fallback_user_bin_dirs() {
-                parts.push(dir);
-            }
-            source = "常见目录兜底（登录 shell 后台探测中）";
-            trigger_login_path_probe();
-        }
+    if let Some(cached) = cached {
+        part_extend(&mut parts, cached);
     }
-    if parts.is_empty() {
-        for dir in fallback_user_bin_dirs() {
-            parts.push(dir);
-        }
-        source = "常见目录兜底";
+    parts.extend(fallback.iter().cloned());
+    if let Some(inherited) = inherited {
+        parts.extend(std::env::split_paths(inherited));
     }
-
-    if let Some(existing) = std::env::var_os("PATH") {
-        parts.extend(std::env::split_paths(&existing));
-    }
-    if let Some(runtime_dir) = sidecar.node.parent() {
+    if let Some(runtime_dir) = runtime_dir {
         parts.push(runtime_dir.to_path_buf());
     }
-
     let mut seen = std::collections::HashSet::new();
-    parts.retain(|p| !p.as_os_str().is_empty() && seen.insert(p.clone()));
-    let joined = std::env::join_paths(parts)
+    parts
+        .into_iter()
+        .filter(|part| !part.as_os_str().is_empty() && seen.insert(part.clone()))
+        .collect()
+}
+
+/// 按 PATH 语义查找一个可执行文件，区分「可见 / 存在但不可执行 / 不可见」。
+///
+/// 旧实现只做 `dir/mnemon` 的 `is_file()`：目录已删除时仍会报「可见」，
+/// 而且不校验可执行位 —— 排障时被它误导过（见 BUG-2026-11-05 疑点 2）。
+enum ExecutableLookup {
+    Found(PathBuf),
+    NotExecutable(PathBuf),
+    Missing,
+}
+
+impl ExecutableLookup {
+    fn describe(&self) -> String {
+        match self {
+            Self::Found(path) => format!("可见 {}", path.display()),
+            Self::NotExecutable(path) => format!("存在但不可执行 {}", path.display()),
+            Self::Missing => "不可见".to_string(),
+        }
+    }
+}
+
+fn lookup_executable(entries: &[String], name: &str) -> ExecutableLookup {
+    let mut not_executable: Option<PathBuf> = None;
+    for dir in entries {
+        let candidate = Path::new(dir).join(name);
+        let Ok(metadata) = candidate.metadata() else { continue };
+        if !metadata.is_file() {
+            continue;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o111 == 0 {
+                not_executable.get_or_insert(candidate);
+                continue;
+            }
+        }
+        return ExecutableLookup::Found(candidate);
+    }
+    match not_executable {
+        Some(path) => ExecutableLookup::NotExecutable(path),
+        None => ExecutableLookup::Missing,
+    }
+}
+
+/// 从 PATH 条目里认出当前生效的 nvm 版本（只用于日志；只认真正存在的目录）。
+fn active_nvm_version(entries: &[String]) -> Option<String> {
+    entries.iter().find_map(|entry| {
+        if !entry.contains("/.nvm/versions/node/") || !Path::new(entry).is_dir() {
+            return None;
+        }
+        let version = entry.split("/.nvm/versions/node/").nth(1)?.split('/').next()?;
+        (!version.is_empty()).then(|| version.to_string())
+    })
+}
+
+/// 最终给侧车的 PATH：登录 shell 缓存 → 常见用户目录兜底 → 继承值 → 包内 runtime（最后）。
+///
+/// 两条硬规则（BUG-2026-11-05 的根因修复）：
+/// 1. **缓存与兜底永远取并集**：缓存只代表「上次捕获时的登录 shell」，nvm 换版本后里面的
+///    版本目录会失效；兜底目录是实时 readdir 出来的，必须始终并进去（缓存优先、去重保序）。
+/// 2. **缓存陈旧就后台重探测**：缓存里有已不存在的目录、或缓存超过一天，就顺手刷新一次，
+///    不等 7 天 TTL —— 旧实现缓存命中时根本不跑探测，「下次启动生效」永远是空话。
+///
+/// 包内 runtime 放最后是刻意的：侧车自己用 `runtime/node` 的绝对路径启动，不依赖 PATH；
+/// 而会话里执行的命令应该和终端一致，包内 Node 只做「用户完全没有 node」时的兜底。
+struct PathPlan {
+    cached_value: Option<String>,
+    source: &'static str,
+    cache_note: Option<String>,
+    probe: bool,
+}
+
+/// 决定「用不用缓存、来源怎么写、要不要后台探测」——纯函数，单测覆盖真正的分支
+/// （BUG 就出在这里：旧实现缓存命中时既不并兜底、也不探测）。
+fn plan_path_sources(inherit_login_shell_path: bool, cache: Option<LoginPathCache>) -> PathPlan {
+    if !inherit_login_shell_path {
+        // 明确关掉继承：不读缓存、不探测，只用兜底目录 + 继承值（保持旧行为）
+        return PathPlan {
+            cached_value: None,
+            source: "常见目录兜底",
+            cache_note: None,
+            probe: false,
+        };
+    }
+    match cache {
+        Some(cache) => PathPlan {
+            source: "登录 shell 缓存 + 兜底目录",
+            probe: cache.needs_refresh(),
+            cache_note: Some(cache.describe()),
+            cached_value: Some(cache.value),
+        },
+        None => PathPlan {
+            cached_value: None,
+            source: "常见目录兜底（登录 shell 后台探测中）",
+            cache_note: None,
+            probe: true,
+        },
+    }
+}
+
+fn path_with_runtime(sidecar: &Sidecar, config: &Config) -> String {
+    let fallback = fallback_user_bin_dirs();
+    // 用户明确关掉继承时不读缓存（省一次文件读取 + stat）
+    let cache = if config.inherit_login_shell_path {
+        read_login_path_cache()
+    } else {
+        None
+    };
+    let plan = plan_path_sources(config.inherit_login_shell_path, cache);
+    if plan.probe {
+        trigger_login_path_probe();
+    }
+
+    let inherited = std::env::var_os("PATH");
+    let runtime_dir = sidecar.node.parent();
+    let parts = compose_path_parts(
+        plan.cached_value.as_deref(),
+        &fallback,
+        inherited.as_deref(),
+        runtime_dir,
+    );
+    let entries: Vec<String> = parts
+        .iter()
+        .map(|part| part.to_string_lossy().to_string())
+        .collect();
+    let joined = std::env::join_paths(&parts)
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    let entries: Vec<&str> = joined.split(':').collect();
-    let has_nvm = entries.iter().any(|e| e.contains(".nvm/"));
-    let has_mnemon = entries.iter().any(|dir| Path::new(dir).join("mnemon").is_file());
+    let mut extras: Vec<String> = Vec::new();
+    if let Some(note) = plan.cache_note {
+        extras.push(note);
+    }
+    if plan.probe {
+        extras.push("已后台重新探测".to_string());
+    }
+    extras.push(format!(
+        "nvm {}",
+        match active_nvm_version(&entries) {
+            Some(version) => format!("在 {version}"),
+            None => "不在".to_string(),
+        }
+    ));
+    extras.push(format!(
+        "mnemon {}",
+        lookup_executable(&entries, "mnemon").describe()
+    ));
     crate::logging::line(
         "path",
         &format!(
-            "侧车 PATH {} 项（来源：{source}，nvm {}，mnemon {}）：{}",
+            "侧车 PATH {} 项（来源：{}，{}）：{}",
             entries.len(),
-            if has_nvm { "在" } else { "不在" },
-            if has_mnemon { "可见" } else { "不可见" },
-            entries.iter().take(6).copied().collect::<Vec<_>>().join(" : ")
+            plan.source,
+            extras.join("，"),
+            entries.iter().take(6).map(String::as_str).collect::<Vec<_>>().join(" : ")
         ),
     );
     joined
@@ -890,5 +1367,315 @@ pub fn cleanup_previous(app: &tauri::AppHandle) {
     std::thread::sleep(Duration::from_millis(800));
     if process_alive(state.pid) {
         signal_group(state.pid, "KILL");
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+
+    /// 每个测试独立的临时目录；不改进程的 HOME/PATH 等全局状态，测试可并行。
+    fn temp_home(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "piweb-sidecar-path-test-{}-{tag}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        dir
+    }
+
+    #[test]
+    fn cache_and_fallback_are_unioned_with_cache_first() {
+        let home = temp_home("union");
+        let dead = home.join(".nvm/versions/node/v24.99.0/bin");
+        let alive = home.join(".nvm/versions/node/v24.22.2/bin");
+        std::fs::create_dir_all(&alive).unwrap();
+        let cached = format!("{}:/usr/bin:/bin", dead.display());
+        let fallback = vec![
+            alive.clone(),
+            PathBuf::from("/usr/bin"),
+            PathBuf::from("/opt/homebrew/bin"),
+        ];
+
+        let parts = compose_path_parts(
+            Some(&cached),
+            &fallback,
+            Some(std::ffi::OsStr::new("/usr/bin:/usr/sbin")),
+            Some(Path::new("/rt")),
+        );
+
+        assert_eq!(parts.first(), Some(&dead), "缓存条目保持最前（即使已失效）");
+        assert!(parts.contains(&alive), "兜底枚举的 nvm bin 必须并集进来");
+        assert!(parts.contains(&PathBuf::from("/opt/homebrew/bin")));
+        assert_eq!(
+            parts.iter().filter(|p| *p == Path::new("/usr/bin")).count(),
+            1,
+            "跨来源重复条目要合并"
+        );
+        assert_eq!(parts.last(), Some(&PathBuf::from("/rt")), "包内 runtime 最后");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn empty_and_duplicate_entries_are_dropped() {
+        let parts = compose_path_parts(Some(":/a::/a:/b:"), &[], None, None);
+        assert_eq!(parts, vec![PathBuf::from("/a"), PathBuf::from("/b")]);
+    }
+
+    #[test]
+    fn missing_cached_dirs_are_detected() {
+        let home = temp_home("missing");
+        let alive = home.join("alive");
+        std::fs::create_dir_all(&alive).unwrap();
+        let dead = home.join("dead/bin");
+        // 字面 "~/.dotnet/tools"（本机真实登录 PATH 里就有）不是「缓存过期」的证据
+        let cached = format!("{}:{}:~/.dotnet/tools", dead.display(), alive.display());
+        assert_eq!(cached_missing_dirs(&cached), vec![dead]);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn cache_plan_unions_fallback_and_probes_when_stale() {
+        let fresh = LoginPathCache {
+            value: "/cached".into(),
+            age: Duration::from_secs(600),
+            missing_dirs: Vec::new(),
+        };
+        let plan = plan_path_sources(true, Some(fresh));
+        assert_eq!(plan.source, "登录 shell 缓存 + 兜底目录", "缓存命中也要标明并集来源");
+        assert_eq!(plan.cached_value.as_deref(), Some("/cached"));
+        assert!(!plan.probe, "刚写过且无失效目录：不该重复探测");
+
+        let stale = LoginPathCache {
+            value: "/cached".into(),
+            age: Duration::from_secs(600),
+            missing_dirs: vec![PathBuf::from("/dead")],
+        };
+        let plan = plan_path_sources(true, Some(stale));
+        assert!(plan.probe, "缓存里有失效目录（nvm 换版本）必须后台重探测");
+        assert_eq!(plan.cached_value.as_deref(), Some("/cached"), "陈旧缓存仍保留在原位（并集）");
+
+        let plan = plan_path_sources(true, None);
+        assert!(plan.probe, "缓存失效（过期/首次启动）要探测");
+        assert_eq!(plan.source, "常见目录兜底（登录 shell 后台探测中）");
+
+        let plan = plan_path_sources(false, None);
+        assert!(!plan.probe, "用户明确关掉继承时不探测");
+        assert_eq!(plan.source, "常见目录兜底");
+    }
+
+    #[test]
+    fn reads_cache_file_and_reports_missing_dirs() {
+        let home = temp_home("cachefile");
+        let dead = home.join("dead/bin");
+        let cache_path = home.join("login-path.txt");
+        std::fs::write(
+            &cache_path,
+            format!("{}:/usr/bin:~/literal", dead.display()),
+        )
+        .unwrap();
+        let cache = read_login_path_cache_from(&cache_path).expect("应读到缓存");
+        assert_eq!(cache.missing_dirs, vec![dead]);
+        assert!(cache.value.contains("/usr/bin"));
+
+        std::fs::write(&cache_path, "too-short").unwrap();
+        assert!(read_login_path_cache_from(&cache_path).is_none(), "不像 PATH 的内容不算缓存");
+        assert!(read_login_path_cache_from(&home.join("no-such-file")).is_none());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn cache_write_cleans_missing_entries_so_staleness_is_meaningful() {
+        let home = temp_home("normalize");
+        let alive = home.join("alive");
+        std::fs::create_dir_all(&alive).unwrap();
+        let raw = format!(
+            "{}:/usr/bin:~/literal:{}:{}/",
+            home.join("gone").display(),
+            alive.display(),
+            alive.display()
+        );
+        let cleaned = normalize_login_path(&raw).expect("清洗后仍有内容");
+        assert!(!cleaned.contains("~/literal"), "字面 ~ 条目要丢掉（它永远不存在）");
+        assert!(!cleaned.contains("gone"), "不存在的目录不写进缓存");
+        assert_eq!(
+            cleaned.matches(&*alive.display().to_string()).count(),
+            1,
+            "重复条目去重"
+        );
+
+        let path = home.join("login-path.txt");
+        std::fs::write(&path, &cleaned).unwrap();
+        let cache = read_login_path_cache_from(&path).expect("清洗后的缓存可读");
+        assert!(cache.missing_dirs.is_empty(), "清洗后不应再有失效目录");
+        assert!(!cache.needs_refresh(), "清洗后的缓存不该反复触发探测");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn newly_missing_cached_dir_marks_cache_stale() {
+        let home = temp_home("nvm-switch");
+        let bin = home.join(".nvm/versions/node/v24.22.2/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let path = home.join("login-path.txt");
+        std::fs::write(&path, bin.display().to_string()).unwrap();
+        assert!(!read_login_path_cache_from(&path)
+            .expect("应读到缓存")
+            .needs_refresh());
+
+        // 模拟 nvm 换版本：缓存里这条目录消失 → 下一次读必须判「陈旧」触发重探测
+        std::fs::remove_dir_all(&bin).unwrap();
+        let cache = read_login_path_cache_from(&path).expect("缓存本身未过期");
+        assert_eq!(cache.missing_dirs, vec![bin]);
+        assert!(cache.needs_refresh(), "版本目录消失是换版本的信号，必须重探测");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn dir_state_distinguishes_missing_from_present() {
+        let home = temp_home("dirstate");
+        let alive = home.join("alive");
+        std::fs::create_dir_all(&alive).unwrap();
+        assert_eq!(cached_dir_state(&alive), CachedDirState::Present);
+        assert_eq!(cached_dir_state(&home.join("gone")), CachedDirState::Missing);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn normalize_refuses_to_overwrite_cache_with_garbage() {
+        let home = temp_home("garbage");
+        let raw = format!(
+            "{}/bin:{}/global/bin",
+            home.join("gone1").display(),
+            home.join("gone2").display()
+        );
+        // 捕获到的是横幅之类的东西：清洗后一条不剩 → 返回 None，调用方保留旧缓存
+        assert!(normalize_login_path(&raw).is_none());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn probe_is_throttled_but_allows_sidecar_restart_later() {
+        assert!(probe_allowed(0, 1_000), "首次启动必须允许探测");
+        assert!(!probe_allowed(10_000, 10_000 + 60_000), "10 分钟内不重复拉起 zsh");
+        assert!(probe_allowed(10_000, 10_000 + 600_000), "超过最小间隔允许再探测");
+        // 时钟回拨（now < last）不应 panic；按「刚探测过」保守跳过本次，不会永久锁死
+        assert!(!probe_allowed(10_000, 5_000));
+    }
+
+    #[test]
+    fn cache_ttl_and_refresh_rules() {
+        // 7 天 TTL 边界（超过才算过期，走兜底 + 探测分支）
+        assert!(cache_is_fresh(Duration::from_secs(7 * 24 * 3600)));
+        assert!(!cache_is_fresh(Duration::from_secs(7 * 24 * 3600 + 1)));
+
+        // 命中但过旧 / 含失效目录 → 需要后台重探测，否则「下次启动生效」永远不生效
+        let fresh = LoginPathCache {
+            value: "/a".into(),
+            age: Duration::from_secs(3600),
+            missing_dirs: Vec::new(),
+        };
+        assert!(!fresh.needs_refresh());
+        let old = LoginPathCache {
+            value: "/a".into(),
+            age: Duration::from_secs(25 * 3600),
+            missing_dirs: Vec::new(),
+        };
+        assert!(old.needs_refresh(), "超过一天要顺手刷新");
+        let stale = LoginPathCache {
+            value: "/a".into(),
+            age: Duration::from_secs(60),
+            missing_dirs: vec![PathBuf::from("/dead")],
+        };
+        assert!(stale.needs_refresh(), "缓存里有失效目录就必须重探测");
+    }
+
+    #[test]
+    fn fallback_enumerates_nvm_and_has_no_dead_hermes_dir() {
+        let home = temp_home("fallback");
+        let active = home.join(".nvm/versions/node/v24.22.2/bin");
+        let newer = home.join(".nvm/versions/node/v26.8.2/bin");
+        std::fs::create_dir_all(&active).unwrap();
+        std::fs::create_dir_all(&newer).unwrap();
+        std::fs::create_dir_all(home.join(".nvm/alias")).unwrap();
+        std::fs::write(home.join(".nvm/alias/default"), "24\n").unwrap();
+
+        let dirs = fallback_user_bin_dirs_in(&home);
+        assert!(dirs.contains(&active), "alias/default 指向的版本必须在兜底里");
+        assert!(dirs.contains(&newer), "其它已装版本也要兜底");
+        assert!(
+            dirs.iter().position(|d| *d == active).unwrap()
+                < dirs.iter().position(|d| *d == newer).unwrap(),
+            "alias/default 指向的版本排在前面"
+        );
+        assert!(
+            !dirs.iter().any(|d| d.to_string_lossy().contains(".hermes")),
+            "已删除的 ~/.hermes/node/bin 不应再当兜底目录"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn executable_lookup_distinguishes_visible_from_missing() {
+        let dir = temp_home("exec");
+        let bin = dir.join("mnemon");
+        std::fs::write(&bin, "#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let entries = vec![dir.to_string_lossy().to_string()];
+        match lookup_executable(&entries, "mnemon") {
+            ExecutableLookup::Found(path) => assert_eq!(path, bin),
+            other => panic!("应为可见，实际：{}", other.describe()),
+        }
+
+        // 目录不存在时旧实现靠 is_file() 也会走到「不可见」；这里锁定「条目指向不存在的目录」
+        let entries = vec![dir.join("no-such-dir").to_string_lossy().to_string()];
+        assert!(matches!(
+            lookup_executable(&entries, "mnemon"),
+            ExecutableLookup::Missing
+        ));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o644)).unwrap();
+            match lookup_executable(&[dir.to_string_lossy().to_string()], "mnemon") {
+                ExecutableLookup::Found(_) => panic!("没有可执行位不应报可见"),
+                _ => {}
+            }
+            let entries = vec![dir.to_string_lossy().to_string()];
+            match lookup_executable(&entries, "mnemon") {
+                ExecutableLookup::NotExecutable(path) => assert_eq!(path, bin),
+                other => panic!("应为「存在但不可执行」，实际：{}", other.describe()),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn active_nvm_version_ignores_deleted_version_dir() {
+        let home = temp_home("nvmver");
+        let alive = home.join(".nvm/versions/node/v24.22.2/bin");
+        std::fs::create_dir_all(&alive).unwrap();
+        let entries = vec![
+            home.join(".nvm/versions/node/v24.14.0/bin")
+                .to_string_lossy()
+                .to_string(),
+            alive.to_string_lossy().to_string(),
+        ];
+        assert_eq!(active_nvm_version(&entries).as_deref(), Some("v24.22.2"));
+        assert_eq!(
+            active_nvm_version(&[home.join(".nvm/versions/node/v24.14.0/bin")
+                .to_string_lossy()
+                .to_string()]),
+            None,
+            "只剩失效版本目录时不能报「nvm 在」"
+        );
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

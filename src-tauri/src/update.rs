@@ -595,7 +595,8 @@ pub fn start_periodic_check(app: &tauri::AppHandle) {
     });
 }
 
-fn headless() -> bool {
+/// 自动化/冒烟测试里不弹原生对话框（`smoke-app.mjs` 会设 `PIWEB_UPDATE_HEADLESS=1`）。
+pub(crate) fn headless() -> bool {
     std::env::var("PIWEB_UPDATE_HEADLESS").ok().as_deref() == Some("1")
 }
 

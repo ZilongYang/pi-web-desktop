@@ -204,6 +204,20 @@
 - [x] 发布 v0.3.2：ci + release 双绿；Release = **Latest**；`latest.json` → 0.3.2；beta 通道仍 0.3.2-beta.1
 - [x] 发布资产核对：dmg / zip / updater 包 + sig / latest.json / SHA256SUMS（**不再有侧车包**）
 
+## 0.3.3-beta.1（B4 PATH 缓存自愈）
+
+- [x] 方案存档：[PLAN-2026-11-05-path-selfheal.md](PLAN-2026-11-05-path-selfheal.md)（批准原文 + 事后补记）
+- [x] 代码：`sidecar.rs` P0a 并集 / P0b 陈旧自愈 / P1 探测加固（5s、并发读 stdout、同线程最多 2 次尝试）/ 可观测性（缓存年龄、失效条目、mnemon 三态）/ 写前清洗 `normalize_login_path()` / 10 分钟探测节流 / P3 清理；二轮评审加固：`cached_dir_state()`（NotFound vs stat 失败）、空清洗拒绝覆盖缓存、stdout 字节攒 + lossy 解码；`menu.rs` 新增「重新载入登录环境」（成功才覆盖、8s、后台线程、防重入、失败弹窗）；`update.rs` `headless()` 改 `pub(crate)`
+- [x] `cargo test` **28 项全过**（path/缓存相关 14 项）
+- [x] `npm run smoke` 通过（导出 HTML 278.9 KB）
+- [x] `npm run smoke:app`：**首轮构建通过**（启动行 / 窗口几何 / 侧车端口可连 / 恢复几何）；**最终构建未重跑**——脚本检测到端口 30241 已有用户正在用的实例在跑会直接拒绝执行（不关用户 App 就跑不了），启动路径未变、隔离实例启动/侧车验证已覆盖
+- [x] 构建 0.3.3-beta.1：`src-tauri/target/release/bundle/macos/Pi Web Desktop.app`，ad-hoc 签名，`codesign --verify --deep --strict` 通过
+- [x] 隔离实例真机验收：`~/Applications/PiWebPathTest.app`（配置/日志/agent 隔离）；陈旧缓存首启即并集 + 后台重探测，二次启动不再跑 zsh（证据见 QA 2026-11-05）
+- [ ] 安装到本机（等用户 App 空闲；用户要求不要动正在用的 App）
+- [ ] 子龙本机验收（真实 App：菜单「Pi Web → 重新载入登录环境」手点一次、终端面板 `which node pnpm mmx defuddle mnemon`、会话里 mnemon 状态行带计数）
+- [ ] git tag `v0.3.3-beta.1`
+- [ ] 发布后核对（`channel-beta` 清单指向 beta.1、正式版通道不受影响）
+
 ## 每次发版的固定动作
 
 ```bash

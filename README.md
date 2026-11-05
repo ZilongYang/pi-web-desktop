@@ -97,13 +97,15 @@ cargo build                 # 调试构建
 ## 已知差异 / 注意事项
 
 - **没有 Service Worker**：macOS 的 WKWebView 不支持 SW（Tauri 无法开 App-Bound Domains），pi-web 的 `sw.js` 注册会失败，页面功能不受影响，只是没有离线缓存。
-- **`PATH` 怎么来的**：从 Dock/Finder 启动的 app 只有 `/usr/bin:/bin:/usr/sbin:/sbin`，终端里的 `PATH`（nvm、pnpm、deno、go、x-cmd…）全是 `.zshrc` 自己加的。所以侧车启动时的 `PATH` 按这个顺序拼：
-  1. 登录 shell 的 `PATH` 缓存（`~/Library/Application Support/com.zilong.piweb.desktop/login-path.txt`，7 天有效）；
-  2. 没有缓存时用「常见目录兜底」（nvm 各版本按 `~/.nvm/alias/default` 优先、volta/asdf/mise/fnm、pnpm、deno、go、conda、orbstack、x-cmd…），同时**后台**跑一次 `zsh -lic 'printf %s "$PATH"'` 写缓存给下次启动用（GUI 里这条命令实测会卡 1s 上下，所以不阻塞启动）；
+- **`PATH` 怎么来的**：从 Dock/Finder 启动的 app 只有 `/usr/bin:/bin:/usr/sbin:/sbin`，终端里的 `PATH`（nvm、pnpm、deno、go、x-cmd…）全是 `.zshrc` 自己加的。所以侧车启动时的 `PATH` 按这个顺序拼（统一去重保序）：
+  1. 登录 shell 的 `PATH` 缓存（`~/Library/Application Support/com.zilong.piweb.desktop/login-path.txt`，7 天有效）；缓存里的死路径（nvm 换版本）**不会再挤掉兜底目录**——兜底目录始终追加；
+  2. 常见目录兜底（nvm 各版本按 `~/.nvm/alias/default` 优先、volta/asdf/mise/fnm、pnpm、deno、go、conda、orbstack、x-cmd…），**无论有没有缓存都会并进来**；
   3. 进程继承来的 `PATH`；
   4. 最后才是包内 `runtime`（保证你机器上完全没有 node 时也能跑；正常情况用你自己的 node，和终端一致）。
 
-  实测结果：侧车里 `node`/`pnpm`/`mnemon`/`git`/`python3`/`go`/`deno` 的解析结果与终端**完全一致**。想换规则：`config.json` 里 `inherit_login_shell_path: false` 就只用兜底目录；删掉上面的缓存文件可强制重新探测。
+  缓存**会自愈**：缓存里含已不存在的目录（nvm 换版本）或超过 24h → 后台重新跑一次 `zsh -lic 'printf %s "$PATH"'` 刷新缓存（GUI 里这条命令实测会卡 1s 上下，所以全程不阻塞启动）；没有缓存或超过 7 天 TTL → 先用兜底目录 + 后台探测。探测有 10 分钟节流，不会反复拉起 zsh；写缓存前会清洗掉登录 shell 自带的死目录（cryptexd、`/pkg/env/global/bin` 之类永远不存在的项），避免"每次启动都判陈旧"。
+
+  实测结果：侧车里 `node`/`pnpm`/`mnemon`/`git`/`python3`/`go`/`deno` 的解析结果与终端**完全一致**。想换规则：`config.json` 里 `inherit_login_shell_path: false` 就只用兜底目录；菜单「Pi Web → 重新载入登录环境」可手动清缓存、重新探测并重启侧车（成功才覆盖缓存，失败弹窗）；删掉上面的缓存文件也会强制重新探测。
 - **TCC 授权**：项目放在 `~/Documents`、`~/Desktop`、`~/Downloads` 时，首次访问会弹系统授权，允许后才会出现在文件树里。
 - **`pi-web stop` 会停掉桌面版的服务**：因为共用同一套 run record；健康监控会弹窗，点「重启服务」即可。
 - **导出会话 HTML**：0.3.2 起随 pi-web 0.15.0 已恢复正常（上游修掉了旧版补丁逻辑）。
@@ -125,7 +127,7 @@ cargo build                 # 调试构建
 | 编辑 | 撤销 ⌘Z / 重做 ⇧⌘Z / 剪切 ⌘X / 拷贝 ⌘C / 粘贴 ⌘V / 全选 ⌘A |
 | **视图** | **放大 ⌘= / 缩小 ⌘- / 实际大小 ⌘0 / 进入全屏**；档位 50%–300%，会记住（写进 `config.json` 的 `zoom`） |
 | 窗口 | 最小化 / 缩放窗口 |
-| Pi Web | 重新加载页面 ⌘R / 重启服务 ⇧⌘R / **检查应用更新…** / 更新通道（正式版 / 测试版） / 在浏览器中打开 / 复制服务地址 / 打开日志目录 / 开发者工具 ⌥⌘I |
+| Pi Web | 重新加载页面 ⌘R / 重启服务 ⇧⌘R / 重新载入登录环境 / **检查应用更新…** / 更新通道（正式版 / 测试版） / 在浏览器中打开 / 复制服务地址 / 打开日志目录 / 开发者工具 ⌥⌘I |
 | 帮助 | GitHub 仓库 |
 
 页面缩放只影响显示，不影响终端面板里执行的命令。
@@ -203,7 +205,8 @@ docs/PLAN-2026-11-01.md# 方案原文（批准版）+ 事后补记
 - 方案记录：初版壳 [PLAN-2026-11-01](docs/PLAN-2026-11-01.md)、更新机制 [PLAN-2026-11-02-L2L3](docs/PLAN-2026-11-02-L2L3.md)、
   通道 [PLAN-2026-11-03-channels](docs/PLAN-2026-11-03-channels.md)、
   侧车清单 [PLAN-2026-11-03-sidecar-manifest](docs/PLAN-2026-11-03-sidecar-manifest.md)、
-  托盘 [PLAN-2026-11-03-tray](docs/PLAN-2026-11-03-tray.md)、**取消 L3** [PLAN-2026-11-04-drop-l3](docs/PLAN-2026-11-04-drop-l3.md)
+  托盘 [PLAN-2026-11-03-tray](docs/PLAN-2026-11-03-tray.md)、**取消 L3** [PLAN-2026-11-04-drop-l3](docs/PLAN-2026-11-04-drop-l3.md)、
+  PATH 缓存自愈 [PLAN-2026-11-05-path-selfheal](docs/PLAN-2026-11-05-path-selfheal.md)
 - 验收与回归：[QA-2026-11-01.md](docs/QA-2026-11-01.md)
 - 发版清单：[RELEASE-CHECKLIST-0.2.0.md](docs/RELEASE-CHECKLIST-0.2.0.md)
 

@@ -218,6 +218,17 @@
 - [x] git tag `v0.3.3-beta.1`（commit `77d26ef`）
 - [x] 发布后核对：ci `41983433996` + release `41983433908` 双绿；Release = Pre-release（8 资产）；`channel-beta` latest.json → 0.3.3-beta.1；稳定通道 Latest 仍 v0.3.2
 
+## 0.3.3（B4 PATH 缓存自愈转正）
+
+- [x] beta 验证期：`0.3.3-beta.1` 在真实日常使用约 1.5 天（无 PATH 相关异常；重启不再重复探测）
+- [x] 版本号五处一致 `0.3.3`；代码与 beta.1 完全一致（只改版本）
+- [x] `cargo test` 28 项 / `npm run smoke` / `smoke-app`（期望版本 0.3.3）全过
+- [x] 构建 0.3.3 + 本机安装（先经子龙同意退出 App）；adhoc 签名校验通过；启动即并集 PATH、缓存 1.5 天后台刷新
+- [x] 子龙本机验收 **通过**
+- [x] 修复 CI runner：`macos-14` 镜像已下线（job 直接 cancelled）→ 两个 workflow 改 `macos-latest`（commit `09755e6`），ci 绿
+- [x] `v0.3.3` 重打到 `09755e6`（首个 tag 的 ci/release 全 cancelled 且无 Release，重打安全）；release `42266275688` 绿
+- [x] 发布后核对：Release = **Latest**、8 资产齐全；`releases/latest/download/latest.json` → 0.3.3；`channel-beta` 仍 0.3.3-beta.1
+
 ## 每次发版的固定动作
 
 ```bash

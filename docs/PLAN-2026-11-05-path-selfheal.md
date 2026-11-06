@@ -58,3 +58,5 @@
 6. **评审二轮追加的 3 个防御点**：① `cached_dir_state()` 区分「真的不存在（NotFound）」与「stat 失败（EACCES / TCC / 未挂载）」，清洗与陈旧判断统一用这个规则（stat 失败不丢条目、不算失效）；② `normalize_login_path()` 清洗后为空时返回 `None`，`write_login_path_cache()` 不覆盖旧缓存（防止把 rc 横幅当 PATH 写空）；③ 探测 stdout 改「按字节攒、最后统一 lossy 解码」，并区分读错误 / 空输出。对应新增测试 `dir_state_distinguishes_missing_from_present`、`normalize_refuses_to_overwrite_cache_with_garbage`。
 
 **验收状态**：`cargo test` 28 项、`npm run smoke` 通过；隔离测试实例（`~/Applications/PiWebPathTest.app`，配置/日志/agent 隔离）真机验收通过——陈旧缓存首启即并集 + 后台重探测，二次启动不再跑 zsh。`smoke-app` 首轮构建通过，最终构建因用户 App 占用 30241 未重跑（启动路径未变，隔离实例启动/侧车验证已覆盖）。**安装到本机、子龙本机验收、tag `v0.3.3-beta.1` 仍待办**（用户要求不要动正在用的 App）。证据见 [BUG 文档 §11](BUG-2026-11-05-login-path-cache.md) 与 [QA 2026-11-05](QA-2026-11-01.md)。
+
+- **转正**：2026-11-07 按发版流程转正为 `0.3.3`（Latest）；转正时只改版本号，代码与该 beta 完全一致。首次 tag 因 GitHub `macos-14` runner 镜像下线导致 ci/release cancelled，修复 workflow 为 `macos-latest` 后重打 tag 发布成功（见 QA 2026-11-07）。

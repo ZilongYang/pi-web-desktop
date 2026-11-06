@@ -79,8 +79,11 @@ gh release list --limit 3          # beta 应为 Pre-release；正式版应为 L
 gh release download channel-beta -p latest.json -D /tmp && cat /tmp/latest.json | head -3
 ```
 
-## 五、当前状态（2026-11-03）
+## 五、当前状态（2026-11-07）
 
-- 正式版：`v0.2.11`（含 F20 滚动条修复）
-- 测试版：`v0.3.0-beta.2`（更新通道功能；验证完成后转正为 `0.3.0`）
-- 之后按本规则：`0.3.1-beta.1` → `0.3.1` → `0.3.2-beta.1` …
+- 正式版：`v0.3.3`（B4 PATH 缓存自愈；`releases/latest` 的 `latest.json` 指向它）
+- 测试通道：`v0.3.3-beta.1`（`channel-beta` 清单未随转正改动；beta 用户切回正式版会自然升级到 `0.3.3`）
+- 下一条：修 bug / 小功能继续走 patch：`0.3.4-beta.1` → `0.3.4`
+- 2026-11-07 注意：`macos-14` 的 GitHub Actions 镜像已下线（job 会直接 cancelled，
+  annotation `The configuration 'macos-14-arm64-us-default' is not supported`），
+  workflow 已改 `macos-latest`；以后新建 workflow 不要再用 `macos-14`。

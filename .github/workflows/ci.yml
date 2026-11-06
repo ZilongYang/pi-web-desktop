@@ -7,7 +7,9 @@ on:
 
 jobs:
   test:
-    runs-on: macos-14
+    # macos-14 镜像已被 GitHub 下线（2026-11-06 起 job 直接 cancelled：
+    # "The configuration 'macos-14-arm64-us-default' is not supported"），用 latest。
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 

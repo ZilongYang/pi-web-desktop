@@ -13,7 +13,9 @@ env:
 
 jobs:
   macos:
-    runs-on: macos-14          # arm64 runner
+    # macos-14 镜像已被 GitHub 下线（2026-11-06 起 job 直接 cancelled）；
+    # 公开仓库的 macos-latest 是 Apple Silicon，产物仍是 darwin-aarch64。
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 

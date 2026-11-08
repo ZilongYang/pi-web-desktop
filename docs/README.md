@@ -19,6 +19,7 @@
 | [PLAN-2026-11-05-path-selfheal.md](PLAN-2026-11-05-path-selfheal.md) | 已批准并实施：PATH 缓存自愈（P0a/P0b/P1/P3+菜单重新载入登录环境） | 同上 |
 | [QA-2026-11-01.md](QA-2026-11-01.md) | 验收清单 + 每轮真机验证记录 + 回归修复记录 | **持续追加**：每次修 bug / 发版验证都在对应小节记结果 |
 | [BUG-2026-11-05-login-path-cache.md](BUG-2026-11-05-login-path-cache.md) | 登录 shell PATH 缓存陈旧导致 App 内全局命令消失：根因、证据、临时修复与根因修复方案（P0–P3） | **不修改**：留档；已追加 §11 实施记录（0.3.3-beta.1） |
+| [BUG-2026-11-08-ask-user-question-rpc-oneway.md](BUG-2026-11-08-ask-user-question-rpc-oneway.md) | `ask_user_question` 问卷在 App 内退化为 RPC 单向走查（无法回退改答案）：根因、代码证据、补丁方案 A/B 与应对约定 C | **不修改**：留档；已追加 §11 实施记录（方案 A 补丁 + 离线宿主模拟 51/51，**待真机验收**）；补丁脚本见 `scripts/patch-rpiv-ask-user-question.mjs`、验证脚本 `scripts/verify-ask-user-question.mjs` |
 | [RELEASE-CHECKLIST-0.2.0.md](RELEASE-CHECKLIST-0.2.0.md) | 每个版本的发版打勾清单（0.2.0 至最新） | **持续追加**：发一版加一节，不改历史 |
 
 ## 截图

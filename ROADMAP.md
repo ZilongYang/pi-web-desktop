@@ -81,6 +81,7 @@
 | F21 | 更新通道（正式版 / 测试版 beta） | 0.3.0 |
 | F22 | 退出前一律确认 | 0.3.1 |
 | — | 取消 L3 + pi-web 升到 0.15.0 + 运行期定期检查 | 0.3.2 |
+| B5 | `ask_user_question` 在 App 内退化为「一题一个原生对话框」（不能回退改答案）：给插件 `@juicesharp/rpiv-ask-user-question` 打「TUI 路径」补丁，离线宿主模拟 51/51 通过（[BUG 记录](docs/BUG-2026-11-08-ask-user-question-rpc-oneway.md)） | 插件 2.15.0 本地补丁（非 App 版本；待真机验收） |
 
 ## 版本历史
 

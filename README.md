@@ -209,6 +209,9 @@ docs/PLAN-2026-11-01.md# 方案原文（批准版）+ 事后补记
   托盘 [PLAN-2026-11-03-tray](docs/PLAN-2026-11-03-tray.md)、**取消 L3** [PLAN-2026-11-04-drop-l3](docs/PLAN-2026-11-04-drop-l3.md)、
   PATH 缓存自愈 [PLAN-2026-11-05-path-selfheal](docs/PLAN-2026-11-05-path-selfheal.md)
 - 验收与回归：[QA-2026-11-01.md](docs/QA-2026-11-01.md)
+- BUG 留档：[BUG-2026-11-05 登录 PATH 缓存](docs/BUG-2026-11-05-login-path-cache.md)、
+  [BUG-2026-11-08 问卷 RPC 单向走查](docs/BUG-2026-11-08-ask-user-question-rpc-oneway.md)
+  （对应补丁：`node scripts/patch-rpiv-ask-user-question.mjs`；验证：`node scripts/verify-ask-user-question.mjs`）
 - 发版清单：[RELEASE-CHECKLIST-0.2.0.md](docs/RELEASE-CHECKLIST-0.2.0.md)
 
 ## License

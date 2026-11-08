@@ -51,6 +51,11 @@
 - **F4 Windows 支持**：先加 Windows CI job 验"能构建"，再找真机装一次；
   `fetch-sidecar --target win32-x64`、`taskkill /T /F`、`CREATE_NO_WINDOW`、NSIS 安装包。
 
+- **扩展宿主能力兼容（上游）**：pi-core 的扩展契约只有 `tui`/`rpc` 两档，pi-web 是"rpc + 实现了 custom"的超集宿主，
+  导致按契约写法的插件在本 App 里静默降级。本仓库现有兜底：插件级补丁（`scripts/patch-rpiv-ask-user-question.mjs`）、
+  只看不动的审计（`scripts/check-extension-host-compat.mjs`）、宿主 `mode="tui"` 可回滚实验（`scripts/patch-pi-web-tui-mode.mjs`）。
+  真正根除要上游 pi-core 增加能力协商、pi-web 如实声明 —— **未做，待子龙决定是否提 issue**（[BUG 记录](docs/BUG-2026-11-08-ask-user-question-rpc-oneway.md) §12/§13）。
+
 ### P2 — 体验打磨
 
 - **F6 下载可取消**：进度窗加「取消」，中断时清理临时文件
@@ -81,7 +86,7 @@
 | F21 | 更新通道（正式版 / 测试版 beta） | 0.3.0 |
 | F22 | 退出前一律确认 | 0.3.1 |
 | — | 取消 L3 + pi-web 升到 0.15.0 + 运行期定期检查 | 0.3.2 |
-| B5 | `ask_user_question` 在 App 内退化为「一题一个原生对话框」（不能回退改答案）：给插件 `@juicesharp/rpiv-ask-user-question` 打「TUI 路径」补丁，离线宿主模拟 51/51 通过（[BUG 记录](docs/BUG-2026-11-08-ask-user-question-rpc-oneway.md)） | 插件 2.15.0 本地补丁（非 App 版本；待真机验收） |
+| B5 | `ask_user_question` 在 App 内退化为「一题一个原生对话框」（不能回退改答案）：给插件 `@juicesharp/rpiv-ask-user-question` 打「TUI 路径」补丁，离线宿主模拟 51/51 通过；根因是 pi-core 契约缺能力协商 + pi-web 为超集宿主（附同类插件审计与宿主 mode=tui 可回滚实验）（[BUG 记录](docs/BUG-2026-11-08-ask-user-question-rpc-oneway.md)） | 插件 2.15.0 本地补丁（非 App 版本；待真机验收） |
 
 ## 版本历史
 

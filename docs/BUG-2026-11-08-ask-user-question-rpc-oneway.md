@@ -19,7 +19,22 @@
 
 插件把 `mode === "rpc"` 一视同仁地当成"渲染不了自定义 UI 的宿主"（VSCode pendant / Zed / Paseo 确实是），**但 `@agegr/pi-web` 是例外** —— 它的 `ui.custom()` 是真实现，并且键盘（含 `Shift+Tab`、方向键）是完整转发的。
 
-**一句话**：这不是按键失效，是插件在本不该降级的地方主动降级了。**改一行即可切回完整 TUI 路径**（见 §7）。
+### 根因在哪一层（2026-11-08 复盘修订）
+
+本文档最初写成"插件在本不该降级的地方主动降级了"。核对上游契约后要修正这个说法：
+
+- **插件是照上游文档写的，不是写错**。pi 官方扩展文档 `docs/extensions.md` → *Mode Behavior* 明确：
+  RPC 模式下 "`custom()` returns `undefined`, component factories are ignored"，并要求
+  "Use `ctx.mode === "tui"` before TUI-specific features (`custom()`, component factories, terminal input)"；
+  `docs/rpc-extension-ui.md` → *Limitations* 第一条也是 "`custom()` returns `undefined`"。
+  所以按 `mode === "rpc"` 放弃自定义 UI 是**守约**（VSCode pendant / Zed / Paseo 正是这样）。
+- **pi-core 只有四档 `mode`**（`tui | rpc | json | print`），**没有"rpc 传输 + 支持文本自定义面板"这一档**。
+- **pi-web 是契约外的"超集宿主"**：声明 `mode:"rpc"`，却真实现了 `custom()`（渲染 `render(width)` 并回灌 ANSI 按键）。
+  它属于"第三类宿主"，但没有名字可用 —— **根因是宿主能力声明与 pi-core 契约的错配**，不是某个插件写错。
+
+因此 §7.1 / §11 的本机补丁改的是"错误推断的落点"：正确、必要、可立即生效，但**它不是"根除"** ——
+pi-core 不提供能力协商的话，每一个按契约写法的插件都会在 pi-web 里降级。生态影响面见 §12，
+"为什么不能靠改宿主一个字符串根除 + 可回滚实验"见 §13。
 
 ---
 
@@ -407,6 +422,8 @@ DECLINE 文本（**7/7 断言成立**）—— bug 可复现。
 2. **上游文档会误导**：插件自带 `docs/keyboard.md` 写着"`Tab`/`Shift+Tab` 切换标签页"—— 那是 TUI 路径的键位。必须先确认宿主走的是哪条路径，再去读对应的键位。
 3. **`docs/hosts.md` 里没有 pi-web**：只列了 terminal / RPC-ACP / non-interactive 三类，pi-web 被归入 RPC（因为 `mode:"rpc"`），但它的 `custom()` 能力其实超出了 RPC 类的定义。
 4. **人机分工**：`ctx.mode` 是 pi-core 传给扩展的宿主声明，属"约定"而非"能力探测"；任何依赖它的分支都可能因宿主能力超集而判错。
+   **但注意（2026-11-08 修订）**：按 pi 官方文档，插件这么做是守约的（§1 复盘）；缺的是 pi-core 没有能力协商这一层，
+   所以别把锅算在插件作者头上 —— 上游提案/生态审计见 §12、§13。
 
 ---
 
@@ -424,6 +441,9 @@ DECLINE 文本（**7/7 断言成立**）—— bug 可复现。
 | 2026-11-08 | 仓库新增 `scripts/patch-rpiv-ask-user-question.mjs`（幂等打补丁/检查/还原）与 `scripts/verify-ask-user-question.mjs`（离线宿主模拟验证） |
 | 2026-11-08 | 补丁前对照 7/7 成立（`ui.custom` 未调用、3 题 = 3 个原生对话框、关框 = DECLINE） |
 | 2026-11-08 | 补丁后离线验证 **51/51 通过**（标签栏 / Shift+Tab 回退 / 改答案覆盖 / Review / 多选 / preview / RPC 回归 / 兜底）；待真机验收 |
+| 2026-11-08 | 复盘根因层次：确认插件按 pi-core 契约（rpc ⇒ custom 返回 undefined）写法无误；根因是契约缺能力协商 + pi-web 为超集宿主（§1 修订） |
+| 2026-11-08 | 生态审计：`scripts/check-extension-host-compat.mjs` 扫本机 12 个扩展，7 个涉及宿主能力判断；4 个不同作者各自打补丁/降级（§12） |
+| 2026-11-08 | 新增宿主 `mode="tui"` 可回滚实验开关 `scripts/patch-pi-web-tui-mode.mjs`；打补丁后 `npm run smoke` 通过、`--revert` 干净还原；真机实验待做（§13） |
 
 ---
 
@@ -492,7 +512,117 @@ node scripts/patch-rpiv-ask-user-question.mjs --revert   # 还原成 npm 原版
 
 ---
 
-## 12. 相关记忆
+## 12. 生态影响面：同类插件审计（2026-11-08）
+
+### 12.1 判定依据（上游契约原文，pi 1.5.0）
+
+- `docs/extensions.md` → **Mode Behavior**：
+
+  | Mode | `ctx.mode` | `ctx.hasUI` | Notes |
+  |---|---|---|---|
+  | Interactive | `"tui"` | `true` | Full TUI with terminal rendering |
+  | RPC (`--mode rpc`) | `"rpc"` | `true` | Dialogs / notifications via JSON protocol; **`custom()` returns `undefined`, component factories are ignored** |
+  | JSON / Print | `"json"` / `"print"` | `false` | UI 方法为空 |
+
+  原文：`Use ctx.mode === "tui" before TUI-specific features (custom(), component factories, terminal input). Use ctx.hasUI before dialog and notification methods that work in both TUI and RPC modes.`
+- `docs/rpc-extension-ui.md` → **Limitations**：`custom()` returns `undefined`；`onTerminalInput()` 返回 no-op unsubscribe；footer/header/编辑器/主题等为空实现。
+- pi-web 实际：`custom` **真实现**、`onTerminalInput` 空实现 → 能力是"不完整超集"，任何一档 `mode` 都描述不准。
+
+### 12.2 本机扫描结果
+
+工具：`node scripts/check-extension-host-compat.mjs`（只读；扫 `~/.pi/agent/settings.json` 里启用的扩展）。
+本次 12 个扩展中 7 个涉及宿主能力判断：
+
+| 扩展 | 版本 | mode 闸门 | custom | onTermInput | 在 Pi Web 下的实际表现（人工判定） |
+|---|---|---|---|---|---|
+| `@juicesharp/rpiv-ask-user-question` | 2.15.0 | rpc×1 | 1 | 2 | **本 bug**：退化成"一题一原生对话框"，主交互有损 → 已打补丁（§11） |
+| `pi-subagents` | 0.86.0 | rpc×3 / tui×3 | 5 | 6 | 组件 UI 降级；**自带能力开关** `PI_SUBAGENTS_COMPONENT_UI=1` |
+| `@narumitw/pi-btw` | 0.63.5 | tui×3 | 10 | 0 | `/btw` 直接提示"requires interactive TUI mode"（需要真终端，合理） |
+| `@narumitw/pi-goal` | 0.54.16 | tui×1 | 0 | 0 | 菜单降级为文本输出（安全，但少了交互） |
+| `@quintinshaw/pi-dynamic-workflows` | 3.15.0 | rpc×1 / tui×5 | 4 | 0 | 导航器降级为文本列表（安全）；注释明确"RPC 下 custom 不生效即使 hasUI=true" |
+| `pi-vision-handoff` | 0.10.13 | tui×1 | 1 | 0 | 模型选择退化为 `select` 对话框（安全） |
+| `pi-mcp-adapter` | 7.0.1 | tui×6 | 1 | 0 | 设置面板不可用；**注释写明**：rpc 下 `custom()` 的 `done` 不触发，`new Promise(resolve=>custom(...))` 会永不 settle、命令挂死 |
+
+其余 5 个无相关用法：`pi-web-access`、`@plannotator/pi-extension`、`@juicesharp/rpiv-todo`、`context-mode`、`zl-mnemon`。
+
+### 12.3 结论
+
+1. **这不是单插件问题**：4 个不同作者在同一处各自设闸/降级，`pi-subagents` 甚至自造能力开关、`pi-mcp-adapter` 用注释记录了挂死风险 —— 生态在用自己的办法补 pi-core 缺的那一层。
+2. **风险等级不同**：只有本插件是"主交互有损"；其余是"功能缺失但安全降级"。
+3. **不能一刀切把宿主声明改成 `tui`**：`pi-btw` 需要全屏终端，`pi-mcp-adapter` 明确写了误判会挂死（§13 详述）。逐插件判断才安全。
+4. 复跑方式：`node scripts/check-extension-host-compat.mjs`（或 `--json`）。建议每次装/升级扩展后跑一次，人工判定栏参考本节。
+
+---
+
+## 13. 实验：让宿主直接声明 `mode="tui"`（可回滚，未默认启用）
+
+### 13.1 为什么值得试
+
+pi-core 契约里 `tui` 是"完整 TUI"，`rpc` 是"无 custom"；pi-web 卡在中间。若把它声明成 `tui`，
+所有按 `mode` 设闸的插件都会走完整 TUI/custom 路径 —— **如果 pi-web 撑得住，这就是最接近"本地根除"的方案**。
+反过来，这也顺带回答了"pi-web 到底算不算 TUI 宿主"。
+
+### 13.2 已知撑不住/没把握的地方（pi-web 的 TUI 是子集）
+
+| 契约预期（tui） | pi-web 实际 |
+|---|---|
+| `ui.onTerminalInput` 原始按键 | ❌ 空实现 `()=>()=>{}` |
+| `custom` 的 `onHandle` / overlay `setHidden()` / `isFocused()` | ❌ 工厂只收到 `(tui, theme, keybindings, done)`，不回调 onHandle |
+| `overlayOptions`（anchor/width/maxHeight/margin） | ⚠️ 只认数字 width，其余忽略（默认宽 92） |
+| 终端尺寸 | ⚠️ 固定 `92×40` |
+| 鼠标、footer/header、`setEditorComponent`、主题切换 | ❌ 无/空实现 |
+
+可能出现：面板能开但键盘操作缺失、组件等不到输入、或命令挂起（用「停止」按钮/Ctrl-C 或重开会话恢复）。
+`pi-mcp-adapter` 的注释就是这类风险的现成证据。
+
+### 13.3 怎么开 / 怎么关（默认只改仓库 sidecar，不动 /Applications 里的 App）
+
+```bash
+# 1) 打实验补丁
+node scripts/patch-pi-web-tui-mode.mjs
+node scripts/patch-pi-web-tui-mode.mjs --check    # 0=已开，2=未开
+
+# 2) 起一个独立 pi-web（与 App 共用 ~/.pi；换端口避免冲突）
+#    注意 cwd 必须是 pi-web 包目录（侧车 launcher 用 __dirname/.. 定位 .next）
+PKG=sidecar/app/node_modules/@agegr/pi-web
+(cd "$PKG" && PI_WEB_NO_OPEN=1 PI_WEB_SKIP_VERSION_CHECK=1 \
+   ../../../../runtime/node bin/pi-web.js --no-open -p 30999 -H 127.0.0.1)
+# 浏览器打开 http://127.0.0.1:30999
+
+# 3) 回滚
+node scripts/patch-pi-web-tui-mode.mjs --revert
+```
+
+也可以 `--app-dir "/Applications/Pi Web Desktop.app/Contents/Resources/pi-web/app"` 直接改已装 App，
+但会让 ad-hoc 签名失效、且 App 升级会覆盖 —— 非必要不建议。
+
+**已做的自动化前置验证**（2026-11-08）：打补丁后 `npm run smoke` 通过（服务器启动 / 页面 200 / 会话 / 导出 / 收尾全绿）；
+并且用**真实 `~/.pi`** 起过一次该命令（2s 就绪，`GET /` 200、`/api/sessions` 200），确认 runbook 可用；
+`--revert` 后文件与备份一致、`mode:"rpc"` 恢复（`--check` 返回 2），测试服务器已停、run record 已清。
+
+### 13.4 真机验收清单（子龙点，结论记在下面）
+
+- [ ] 侧车方式启动无报错，页面能开、会话能发消息
+- [ ] `ask_user_question` 3 题问卷：标签栏 / Shift+Tab 回退 / 改答案 / Review（应与 §11 补丁后一致）
+- [ ] `@narumitw/pi-goal`：`/goal` 出现**菜单面板**（而不是文本回退）；Esc 可退出、不卡
+- [ ] `@quintinshaw/pi-dynamic-workflows`：`/workflows` 出现导航器；Esc/退出不卡
+- [ ] `pi-mcp-adapter`：MCP 设置面板能开能关；若卡住，记录现象与恢复方式
+- [ ] `pi-subagents`：组件 UI 能开（`PI_SUBAGENTS_COMPONENT_UI` 不再是必要条件）
+- [ ] `@narumitw/pi-btw`：`/btw` 的提示是否变化（预期仍不可用/异常）；确认不破坏主流程
+- [ ] 任意会话结束后整体仍正常；「停止」/Ctrl-C 能终止卡住的交互
+- [ ] `--revert` 后行为回到现状（`--check`=2，重启生效）
+
+**结论记录（待填）**：
+
+| 项 | 结果 |
+|---|---|
+| 日期 / 执行人 | |
+| 结论 | ⬜ 可作长期方案 ⬜ 部分可用（列不可用项） ⬜ 不可用（列原因） |
+| 备注 | |
+
+---
+
+## 14. 相关记忆
 
 - mnemon 关键词：`pi-web-desktop`、`ask_user_question`、`rpiv-ask-user-question`、`rpc 单向路径`、`问卷不可回退`
 - 交叉参考：`docs/BUG-2026-11-05-login-path-cache.md`（同样是"宿主声明 / 缓存与实际能力不一致"类问题）

@@ -229,6 +229,23 @@
 - [x] `v0.3.3` 重打到 `09755e6`（首个 tag 的 ci/release 全 cancelled 且无 Release，重打安全）；release `42266275688` 绿
 - [x] 发布后核对：Release = **Latest**、8 资产齐全；`releases/latest/download/latest.json` → 0.3.3；`channel-beta` 仍 0.3.3-beta.1
 
+## 0.3.4-beta.1（内置 pi-web 0.18.0 / SDK 1.6.0 / Node 24.22.3）
+
+方案：[PLAN-2026-11-25](PLAN-2026-11-25.md)（0.15.0 → 0.18.0 三跳合并升级）。
+
+- [x] `sidecar.json`：`piWebVersion 0.18.0` / `nodeVersion 24.22.3`（原定 22.23.5，因 context-mode hook 要求 Node ≥ 24.15.0 而改，见下方补充）
+- [x] 删 `scripts/patch-pi-web-export.mjs` + `fetch-sidecar.mjs` 里 `applyExportPatch`（0.16 起上游改用内置 pi CLI 导出）；`patch-pi-web-tui-mode.mjs` 删未用的 `TARGET_VERSION`
+- [x] 版本号四处一致 `0.3.4-beta.1`（package.json / package-lock.json / Cargo.toml / tauri.conf.json）；`menu.rs` 测试夹具改为 0.18.0 / 1.6.0 / 24.22.3
+- [x] `rm -rf sidecar && npm run sidecar` 干净重装 → manifest `0.18.0 / 1.6.0 / v24.22.3`；侧车 424MB / 19855 文件；折叠补丁 8 个引用
+- [x] 修 `smoke-app.mjs`：两个临时配置写 `attach_policy: "never"`（否则会附着到本机同版本 pi-web，自己不起服务 → 端口检查误报）
+- [x] `npm run smoke` 通过（GET 200、sessions、export 279.0 KB、run record 清理、端口释放）
+- [x] `cargo test` 28 项全过
+- [x] `tauri build --bundles app`（adhoc 签名）+ `npm run smoke:app` 通过（期望版本 0.3.4-beta.1、窗口几何、侧车端口、恢复几何）
+- [x] 本机安装：隔离实例 `/Applications/Pi Web Desktop 0.3.4-beta.1.app`（端口 30341、独立配置目录、`attach_policy: never`），不动正在用的 0.3.3
+- [x] 子龙本机验收 **通过**（2026-11-25 晚；含 `bash`/`ctx_execute`（context-mode）恢复、导出、折叠、侧聊/Agents 条、终端、问卷插件）
+- [ ] tag `v0.3.4-beta.1` → 推 `channel-beta` 清单
+- [ ] 稳定期后出 `0.3.4` 正式版（只改版本号，代码与 beta.1 一致）
+
 ## 每次发版的固定动作
 
 ```bash

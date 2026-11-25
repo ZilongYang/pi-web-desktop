@@ -57,6 +57,7 @@ cargo build                 # 调试构建
 
 | 壳版本 | 内置 pi-web | 内置 Node |
 |---|---|---|
+| 0.3.4-beta.1 | 0.18.0 | 24.22.3 |
 | 0.3.3 | 0.15.0 | 22.23.4 |
 | 0.3.2 | 0.15.0 | 22.23.4 |
 
@@ -64,7 +65,7 @@ cargo build                 # 调试构建
 
 版本只在 `sidecar.json` 里改一处：改完 `npm run sidecar` 再重建即可。升级 pi-web 后**必须**跑一次 `npm run smoke`。
 
-**Node 要跟安全版本走**：内置 Node 是 pi-web 服务端的运行时，它负责所有出站 HTTPS（模型 API、OAuth 登录、更新检查）。`pi.json` 里 pin 的版本低于上游安全修复时，pi 的 Plannotator 扩展会在界面顶部提示（例如 2026-10 的 eMudhra CA 事件要求 Node ≥ 22.23.4 / 24.22.1 / 26.12.1）。升级方式同样是改 `sidecar.json` 的 `nodeVersion` → `npm run sidecar` → `tauri build`。
+**Node 要跟安全版本走**：内置 Node 是 pi-web 服务端的运行时，它负责所有出站 HTTPS（模型 API、OAuth 登录、更新检查）。`sidecar.json` 里 pin 的版本低于上游安全修复时，pi 的 Plannotator 扩展会在界面顶部提示（例如 2026-10 的 eMudhra CA 事件要求 Node ≥ 22.23.4 / 24.22.1 / 26.12.1）。升级方式同样是改 `sidecar.json` 的 `nodeVersion` → `npm run sidecar` → `tauri build`。
 
 ## 配置
 
@@ -109,7 +110,7 @@ cargo build                 # 调试构建
   实测结果：侧车里 `node`/`pnpm`/`mnemon`/`git`/`python3`/`go`/`deno` 的解析结果与终端**完全一致**。想换规则：`config.json` 里 `inherit_login_shell_path: false` 就只用兜底目录；菜单「Pi Web → 重新载入登录环境」可手动清缓存、重新探测并重启侧车（成功才覆盖缓存，失败弹窗）；删掉上面的缓存文件也会强制重新探测。
 - **TCC 授权**：项目放在 `~/Documents`、`~/Desktop`、`~/Downloads` 时，首次访问会弹系统授权，允许后才会出现在文件树里。
 - **`pi-web stop` 会停掉桌面版的服务**：因为共用同一套 run record；健康监控会弹窗，点「重启服务」即可。
-- **导出会话 HTML**：0.3.2 起随 pi-web 0.15.0 已恢复正常（上游修掉了旧版补丁逻辑）。
+- **导出会话 HTML**：0.3.2 起随 pi-web 0.15.0 已恢复正常；0.3.4 起 pi-web 0.16+ 换了实现（调内置 pi CLI 包的 `dist/core/export-html`，不再字符串替换 SDK 模板），原先的「导出补丁」`scripts/patch-pi-web-export.mjs` 已删除。
 - **退出确认覆盖范围**：⌘Q / 菜单「退出」/ 托盘「退出」都会弹确认；但 Dock 右键「退出」和系统关机/注销
   走的是 AppKit terminate，目前**拦不住**（后续若需要可自己实现 `applicationShouldTerminate`）。
 - **首次启动会重写 `Resources/pi-web/app/node_modules/@agegr/pi-web/.next/prerender-manifest.json`**（pi-web launcher 轮换 preview 密钥的安全设计）。之后 `codesign --deep --strict` 会因这一个数据文件报签名不符；签名校验请在本机首次运行**之前**做，或改用 Developer ID + 重新签名的发布流程。

@@ -35,7 +35,6 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
-const TARGET_VERSION = "0.15.0";
 const BACKUP_SUFFIX = ".bak-tuimode";
 
 const args = process.argv.slice(2);

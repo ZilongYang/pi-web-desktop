@@ -307,10 +307,10 @@ mod tests {
 
     fn versions() -> crate::update::BundledVersions {
         crate::update::BundledVersions {
-            app: "0.2.9".to_string(),
-            pi_web: "0.14.2".to_string(),
-            pi_sdk: "1.5.0".to_string(),
-            node: "22.23.4".to_string(),
+            app: "0.3.4-beta.1".to_string(),
+            pi_web: "0.18.0".to_string(),
+            pi_sdk: "1.6.0".to_string(),
+            node: "24.22.3".to_string(),
         }
     }
 
@@ -319,7 +319,7 @@ mod tests {
     fn about_credits_lists_bundled_versions() {
         assert_eq!(
             about_credits(&versions(), crate::update::CHANNEL_STABLE),
-            "内置 pi-web 0.14.2 · pi SDK 1.5.0 · Node 22.23.4 · 更新通道：正式版"
+            "内置 pi-web 0.18.0 · pi SDK 1.6.0 · Node 24.22.3 · 更新通道：正式版"
         );
         assert!(about_credits(&versions(), crate::update::CHANNEL_BETA).ends_with("测试版 beta"));
     }
@@ -332,7 +332,7 @@ mod tests {
             ..versions()
         };
         assert!(about_credits(&partial, crate::update::CHANNEL_STABLE)
-            .starts_with("内置 pi-web 0.14.2 · pi SDK ? · Node ?"));
+            .starts_with("内置 pi-web 0.18.0 · pi SDK ? · Node ?"));
     }
 
     #[test]

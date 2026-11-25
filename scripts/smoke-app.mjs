@@ -209,6 +209,8 @@ async function main() {
   }
 
   // 已有实例在跑时，单实例插件会让新进程直接退出，表现成"启动即结束"——先说清楚。
+  // 另外默认 attach_policy=same-version：本机若有同版本 pi-web 在跑（例如终端 `pi-web`），
+  // 测试实例会「附着」过去、自己不起服务 → 端口检查必挂。所以两个配置都写 attach_policy: never。
   const running = await new Promise((resolve) => {
     const socket = net.connect({ port: 30241, host: "127.0.0.1" });
     socket.setTimeout(800);
@@ -250,7 +252,7 @@ async function main() {
     // ---- 第一轮：全新配置，验证能启动 + 几何能落盘 -------------------------
     const firstConfigDir = path.join(tmpRoot, "config-1");
     const firstPort = await freePort();
-    writeConfig(firstConfigDir, { port: firstPort, zoom: 1 });
+    writeConfig(firstConfigDir, { port: firstPort, zoom: 1, attach_policy: "never" });
 
     const first = await runOnce({ binary: runBinary, configDir: firstConfigDir, port: firstPort, label: "first" });
     // DSH/沙箱父进程里启动副本 App 会被 macOS 拒绝 sandbox extension -> 资源找不到。
@@ -302,7 +304,7 @@ async function main() {
     const secondConfigDir = path.join(tmpRoot, "config-2");
     const secondPort = await freePort();
     const wanted = { x: 120, y: 140, width: 1000, height: 680 };
-    writeConfig(secondConfigDir, { port: secondPort, zoom: 1, window: wanted });
+    writeConfig(secondConfigDir, { port: secondPort, zoom: 1, attach_policy: "never", window: wanted });
 
     const second = await runOnce({ binary: runBinary, configDir: secondConfigDir, port: secondPort, label: "second" });
     const restoreLine = `恢复窗口 ${wanted.width}×${wanted.height} @ (${wanted.x}, ${wanted.y})`;

@@ -11,7 +11,7 @@
 
 - 仓库：<https://github.com/ZilongYang/pi-web-desktop>（MIT）
 - 最新正式版：**v0.3.3**（内置 pi-web **0.15.0** / pi SDK 1.5.0 / Node 22.23.4）
-- 测试通道最新：**v0.3.4-beta.1**（内置 pi-web **0.18.0** / pi SDK 1.6.0 / Node 24.22.3；本地构建完成，待子龙本机验收后发布）
+- 测试通道最新：**v0.3.4-beta.1**（Pre-release；内置 pi-web **0.18.0** / pi SDK 1.6.0 / Node 24.22.3）
 - 平台：macOS 14+ arm64（Windows 代码路径已写、未验证；Linux 未做）
 
 ### 两条硬规则
@@ -110,9 +110,9 @@
 
 ## 下次继续
 
-当前状态：**v0.3.3 已发布、本机已安装**；`v0.3.4-beta.1`（pi-web 0.18.0 / SDK 1.6.0 / Node 24.22.3）已构建完成并通过**子龙真机验收**，待 tag。
+当前状态：**正式版 v0.3.3 已发布**；**beta 通道 `v0.3.4-beta.1` 已发布**（pi-web 0.18.0 / SDK 1.6.0 / Node 24.22.3，子龙已验收）。
 
-1. 发 beta：tag `v0.3.4-beta.1` → CI 出 Pre-release + 推 `channel-beta` 清单
-2. 稳定期后出 `0.3.4` 正式版（只改版本号，代码与 beta.1 一致）
+1. beta 稳定期观察（重点：context-mode、导出、折叠、侧聊/Agents 条、终端、问卷插件）
+2. 稳定后出 `0.3.4` 正式版（只改版本号，代码与 beta.1 一致）
 3. 后续候选：Windows（F4）、下载可取消（F6）、检查中反馈（F7）、失败建议（F8）、缩放档位（F9）、Dock/系统退出确认
 3. 每次发版同步：本页「最新正式版 / 版本历史」+ [QA](docs/QA-2026-11-01.md) + [发版清单](docs/RELEASE-CHECKLIST-0.2.0.md)

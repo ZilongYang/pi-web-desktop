@@ -261,8 +261,8 @@
 - [x] `tauri build --bundles app`（adhoc 签名，447.57 MiB）+ `npm run smoke:app` 通过（期望版本 0.3.4-beta.2、窗口几何、侧车端口、恢复几何）
 - [x] 本机安装：隔离实例 `/Applications/Pi Web Desktop 0.3.4-beta.2.app`（端口 30341、配置目录 `com.zilong.piweb.desktop-034beta2`、`attach_policy: never`），不动正在用的 0.3.3 与 0.3.4-beta.1
 - [x] 子龙本机验收 **通过**（2026-11-28 02:47，30341 隔离实例）
-- [ ] 提交 + push master
-- [ ] tag `v0.3.4-beta.2` 并推送 → CI 出 Pre-release + 覆盖 `channel-beta` 清单
+- [x] 提交 `df704cb` + push master（`f61afdd..df704cb`）
+- [x] tag `v0.3.4-beta.2` 并推送 → ci `46052388567`（49s）/ release `46052388469`（11m38s）双双成功；Release = Pre-release，8 资产齐全；`channel-beta` 清单 → 0.3.4-beta.2（正式通道仍 0.3.3）
 - [ ] beta 通道真实升级一遍
 - [ ] 稳定后出 `0.3.4` 正式版（只改版本号）
 

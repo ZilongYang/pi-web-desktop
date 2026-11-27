@@ -248,6 +248,24 @@
 - [x] Release `v0.3.4-beta.1` = Pre-release，8 资产齐全；`channel-beta` 清单 → 0.3.4-beta.1（0.3.3 正式通道不变）
 - [ ] 稳定期后出 `0.3.4` 正式版（只改版本号，代码与 beta.1 一致）
 
+## 0.3.4-beta.2（内置 pi-web 0.19.0 / SDK 1.6.1 / Node 24.22.3）
+
+方案：[PLAN-2026-11-28](PLAN-2026-11-28.md)（0.18.0 → 0.19.0 单跳；Node 保持 24.22.3）。
+
+- [x] `sidecar.json`：`piWebVersion 0.19.0`（`nodeVersion` 保持 24.22.3；24.x 仍是 2026-11-10 安全版）
+- [x] 版本号四处一致 `0.3.4-beta.2`（package.json / package-lock.json / Cargo.toml / tauri.conf.json / Cargo.lock）；`menu.rs` 测试夹具改为 0.19.0 / 1.6.1 / 24.22.3
+- [x] 不改 patch 脚本（导出补丁早已删；折叠补丁锚点在 0.19 命中；TUI-mode 实验开关未打）
+- [x] 干净重装侧车 → manifest `0.19.0 / 1.6.1 / v24.22.3`；侧车 425MB / 19878 文件；折叠补丁 8 个引用
+- [x] `npm run smoke` 通过（GET 200、sessions、export 279.0 KB、run record 清理、端口释放）
+- [x] `cargo test` 28 项全过
+- [x] `tauri build --bundles app`（adhoc 签名，447.57 MiB）+ `npm run smoke:app` 通过（期望版本 0.3.4-beta.2、窗口几何、侧车端口、恢复几何）
+- [x] 本机安装：隔离实例 `/Applications/Pi Web Desktop 0.3.4-beta.2.app`（端口 30341、配置目录 `com.zilong.piweb.desktop-034beta2`、`attach_policy: never`），不动正在用的 0.3.3 与 0.3.4-beta.1
+- [x] 子龙本机验收 **通过**（2026-11-28 02:47，30341 隔离实例）
+- [ ] 提交 + push master
+- [ ] tag `v0.3.4-beta.2` 并推送 → CI 出 Pre-release + 覆盖 `channel-beta` 清单
+- [ ] beta 通道真实升级一遍
+- [ ] 稳定后出 `0.3.4` 正式版（只改版本号）
+
 ## 每次发版的固定动作
 
 ```bash

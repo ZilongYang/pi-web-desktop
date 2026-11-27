@@ -1,5 +1,5 @@
 {
-  "piWebVersion": "0.18.0",
+  "piWebVersion": "0.19.0",
   "nodeVersion": "24.22.3",
   "nodeDownloadBase": "https://nodejs.org/dist",
   "_comment": "piWebVersion / nodeVersion 是唯一版本源；改这里 -> 重跑 npm run sidecar -> 重建 app。（Node 24.22.3 含 2026-10 的 TLS 修复与 11-11 的 http2/tls 安全修复；且 pi 会话里的 context-mode hook 硬要求 Node ≥ 24.15.0，22.x 会导致 bash 工具被拒）"

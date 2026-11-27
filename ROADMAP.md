@@ -12,6 +12,7 @@
 - 仓库：<https://github.com/ZilongYang/pi-web-desktop>（MIT）
 - 最新正式版：**v0.3.3**（内置 pi-web **0.15.0** / pi SDK 1.5.0 / Node 22.23.4）
 - 测试通道最新：**v0.3.4-beta.1**（Pre-release；内置 pi-web **0.18.0** / pi SDK 1.6.0 / Node 24.22.3）
+- 已构建、**待本机验收**：**0.3.4-beta.2**（内置 pi-web **0.19.0** / pi SDK 1.6.1 / Node 24.22.3）
 - 平台：macOS 14+ arm64（Windows 代码路径已写、未验证；Linux 未做）
 
 ### 两条硬规则
@@ -88,11 +89,13 @@
 | — | 取消 L3 + pi-web 升到 0.15.0 + 运行期定期检查 | 0.3.2 |
 | B5 | `ask_user_question` 在 App 内退化为「一题一个原生对话框」（不能回退改答案）：给插件 `@juicesharp/rpiv-ask-user-question` 打「TUI 路径」补丁，离线宿主模拟 51/51 通过；根因是 pi-core 契约缺能力协商 + pi-web 为超集宿主（附同类插件审计与宿主 mode=tui 可回滚实验）（[BUG 记录](docs/BUG-2026-11-08-ask-user-question-rpc-oneway.md)） | 插件 2.15.0 本地补丁（非 App 版本；待真机验收） |
 | — | 内置 pi-web 0.15.0 → **0.18.0**（pi SDK 1.6.0）+ Node 24.22.3；导出改用上游实现，删除 `scripts/patch-pi-web-export.mjs`（[PLAN](docs/PLAN-2026-11-25.md)） | 0.3.4-beta.1 |
+| — | 内置 pi-web 0.18.0 → **0.19.0**（pi SDK 1.6.1），Node 保持 24.22.3；0.19 的 `frame-ancestors 'self'` / `X-Frame-Options: SAMEORIGIN` 只限制被嵌入，壳是顶层加载不受影响（[PLAN](docs/PLAN-2026-11-28.md)） | 0.3.4-beta.2（待验收） |
 
 ## 版本历史
 
 | 版本 | 内容 |
 |---|---|
+| 0.3.4-beta.2 | 内置 pi-web 升 0.19.0（pi SDK 1.6.1），Node 保持 24.22.3；上游新增 CSP `frame-ancestors`/`X-Frame-Options`（不影响顶层加载）；新增引导/后续消息、网络代理、notices 设置 |
 | 0.3.4-beta.1 | 内置 pi-web 升 0.18.0（pi SDK 1.6.0）+ Node 24.22.3；导出 HTML 改上游实现，删导出补丁；扩展组件 `render()` 返回 readonly 的兼容性核查 |
 | 0.3.3 | B4 转正：PATH 缓存自愈（缓存+兜底并集、陈旧自动重探测、菜单「重新载入登录环境」） |
 | 0.3.3-beta.1 | 测试版：B4 PATH 缓存自愈（缓存+兜底并集、陈旧自动重探测、菜单「重新载入登录环境」） |
@@ -110,9 +113,9 @@
 
 ## 下次继续
 
-当前状态：**正式版 v0.3.3 已发布**；**beta 通道 `v0.3.4-beta.1` 已发布**（pi-web 0.18.0 / SDK 1.6.0 / Node 24.22.3，子龙已验收）。
+当前状态：**正式版 v0.3.3 已发布**；**beta 通道 `v0.3.4-beta.1` 已发布**（pi-web 0.18.0 / SDK 1.6.0 / Node 24.22.3，子龙已验收）；**0.3.4-beta.2 已构建（pi-web 0.19.0 / SDK 1.6.1 / Node 24.22.3），装在隔离实例 30341 等子龙验收，未 tag**。
 
-1. beta 稳定期观察（重点：context-mode、导出、折叠、侧聊/Agents 条、终端、问卷插件）
-2. 稳定后出 `0.3.4` 正式版（只改版本号，代码与 beta.1 一致）
+1. **子龙在 `/Applications/Pi Web Desktop 0.3.4-beta.2.app` 真机验收**（重点：导出、折叠、终端、设置新页、`#` 引用会话、网络代理）
+2. 验收通过 → tag `v0.3.4-beta.2` → beta 通道真实升级一遍 → 稳定后出 `0.3.4` 正式版（只改版本号）
 3. 后续候选：Windows（F4）、下载可取消（F6）、检查中反馈（F7）、失败建议（F8）、缩放档位（F9）、Dock/系统退出确认
-3. 每次发版同步：本页「最新正式版 / 版本历史」+ [QA](docs/QA-2026-11-01.md) + [发版清单](docs/RELEASE-CHECKLIST-0.2.0.md)
+4. 每次发版同步：本页「最新正式版 / 版本历史」+ [QA](docs/QA-2026-11-01.md) + [发版清单](docs/RELEASE-CHECKLIST-0.2.0.md)

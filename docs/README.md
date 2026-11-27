@@ -17,7 +17,8 @@
 | [PLAN-2026-11-03-tray.md](PLAN-2026-11-03-tray.md) | 菜单栏托盘 + 关窗隐藏（F16）的已批准方案 | 同上 |
 | [PLAN-2026-11-04-drop-l3.md](PLAN-2026-11-04-drop-l3.md) | **取消 L3**（pi-web 随壳固定）+ 运行期定期检查的已批准方案 | 同上 |
 | [PLAN-2026-11-05-path-selfheal.md](PLAN-2026-11-05-path-selfheal.md) | 已批准并实施：PATH 缓存自愈（P0a/P0b/P1/P3+菜单重新载入登录环境） | 同上 |
-| [PLAN-2026-11-25.md](PLAN-2026-11-25.md) | **已批准、待执行**：内置 pi-web 0.15.0 → 0.18.0（SDK 1.6.0、Node 22.23.5、壳 0.3.4-beta.1 → 0.3.4）的升级方案，含 /tmp 隔离环境的兼容性验证结论 | **不修改**：批准原文存档；实施后只在文末「事后补记」追加 |
+| [PLAN-2026-11-25.md](PLAN-2026-11-25.md) | 内置 pi-web 0.15.0 → 0.18.0（SDK 1.6.0、Node 22.23.5、壳 0.3.4-beta.1 → 0.3.4）的已批准并实施完成的升级方案，含 /tmp 隔离环境的兼容性验证结论 | **不修改**：批准原文存档；实施记录见文末「事后补记」 |
+| [PLAN-2026-11-28.md](PLAN-2026-11-28.md) | **已批准、执行中**：内置 pi-web 0.18.0 → 0.19.0（SDK 1.6.1、Node 保持 24.22.3、壳 0.3.4-beta.2）的升级方案，含 /tmp 隔离环境的兼容性验证结论 | **不修改**：批准原文存档；实施后只在文末「事后补记」追加 |
 | [QA-2026-11-01.md](QA-2026-11-01.md) | 验收清单 + 每轮真机验证记录 + 回归修复记录 | **持续追加**：每次修 bug / 发版验证都在对应小节记结果 |
 | [BUG-2026-11-05-login-path-cache.md](BUG-2026-11-05-login-path-cache.md) | 登录 shell PATH 缓存陈旧导致 App 内全局命令消失：根因、证据、临时修复与根因修复方案（P0–P3） | **不修改**：留档；已追加 §11 实施记录（0.3.3-beta.1） |
 | [BUG-2026-11-08-ask-user-question-rpc-oneway.md](BUG-2026-11-08-ask-user-question-rpc-oneway.md) | `ask_user_question` 问卷在 App 内退化为 RPC 单向走查（无法回退改答案）：根因（宿主能力声明 ↔ pi-core 契约错配）、代码证据、方案 A/B/C/D、**同类插件审计**与 **宿主 mode=tui 可回滚实验** | **不修改**：留档；已追加 §11 实施记录（补丁 + 离线模拟 51/51，**待真机验收**）、§12 生态审计、§13 实验开关。脚本：`patch-rpiv-ask-user-question.mjs` / `verify-ask-user-question.mjs` / `check-extension-host-compat.mjs` / `patch-pi-web-tui-mode.mjs` |
